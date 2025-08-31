@@ -19,7 +19,6 @@ def main():
     parser.add_argument("--delay_max", type=float)
     parser.add_argument("--concurrency", type=int)
     parser.add_argument("--outfile", help="output JSONL file", default=None)
-    # Optional passthroughs to the verifier:
     parser.add_argument("--verify_concurrency", type=int, default=3)
     parser.add_argument("--max_pages", type=int, default=20)
     parser.add_argument("--max_retries", type=int, default=2,
@@ -46,17 +45,13 @@ def main():
     if args.source == "gmaps":
         asyncio.run(run_gmaps(args))
 
-    # --- after scraping (or when skipping), auto-trigger email verifier ---
-    # IMPORTANT: correct path to tools/scrape_verify_only.py
     verify_script = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "tools", "scrape_verify_only.py")
     )
 
-    # Build dynamic names from q+location (same sanitization used for scrape outfile)
     safe_q = args.q.replace(" ", "_")
     safe_loc = args.location.replace(" ", "_").replace(",", "")
 
-    # File produced by directory scraping (gmaps/yelp)
     if not args.outfile:
         args.outfile = f"out/{args.source}_{safe_q}_{safe_loc}.jsonl"
     scrape_outfile_abs = os.path.abspath(args.outfile)
@@ -65,7 +60,6 @@ def main():
         print(f"[ERROR] Expected infile for verifier not found: {scrape_outfile_abs}")
         raise SystemExit(1)
 
-    # Dynamic email results file
     verify_outfile = f"out/emails_{safe_q}_{safe_loc}.jsonl"
     verify_outfile_abs = os.path.abspath(verify_outfile)
     os.makedirs(os.path.dirname(verify_outfile_abs), exist_ok=True)
@@ -73,28 +67,24 @@ def main():
     print(f"\n[INFO] triggering scrape_verify_only.py on {scrape_outfile_abs} ...")
     print(f"[INFO] writing email results to {verify_outfile_abs}\n")
 
-    scraper_dir = os.path.abspath(os.path.dirname(__file__))  # .../scraper
-    project_root = os.path.abspath(os.path.join(scraper_dir, ".."))  # repo root (one level up)
+    scraper_dir = os.path.abspath(os.path.dirname(__file__))
+    project_root = os.path.abspath(os.path.join(scraper_dir, ".."))
     env = os.environ.copy()
 
-    # Ensure verifier can import local_settings and project modules
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join(
         [scraper_dir, project_root] + ([existing_pp] if existing_pp else [])
     )
-
-    # Build the verifier command with correct arg names/values
     cmd = [
         sys.executable,
         verify_script,
         "--infile", scrape_outfile_abs,
         "--out", verify_outfile_abs,
-        "--verify-concurrency", str(args.verify_concurrency or 3),  # from verify_concurrency
-        "--max-pages", str(args.max_pages or 20),  # from max_pages
-        "--site-concurrency", str(args.concurrency or 6),  # reuse scraping concurrency
+        "--verify-concurrency", str(args.verify_concurrency or 3),
+        "--max-pages", str(args.max_pages or 20),
+        "--site-concurrency", str(args.concurrency or 6),
         "--use-hunter-cache", str(args.use_hunter_cache or 0),
     ]
-    # Only include --run-id if provided
     if args.run_id:
         cmd.extend(["--run-id", args.run_id])
 
