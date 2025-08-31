@@ -34,7 +34,7 @@ except Exception:
 
     def new_run_id() -> str:
         return time.strftime("run_%Y%m%d_%H%M%S")
-OUT_ROOT = os.getenv("OUT_ROOT", "/out")
+OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 MAX_PAGES = 20
 TIMEOUT = 15.0
 INCLUDE_EXTERNAL = False

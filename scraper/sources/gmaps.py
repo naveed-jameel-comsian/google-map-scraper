@@ -17,7 +17,7 @@ from core.telemetry import JsonLogger, new_run_id
 import shutil
 
 HARD_WORKER_TIMEOUT = 90
-OUT_ROOT = os.getenv("OUT_ROOT", "/out")
+OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 
 
 def _normloc_for_filename(loc: str) -> str:
