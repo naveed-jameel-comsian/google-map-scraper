@@ -7,9 +7,10 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from dashboard.server.settings import RUNS_DIR
+
 router = APIRouter()
 
-RUNS_DIR = os.getenv("RUN_REGISTRY_DIR", "out/runs")
 HEARTBEAT_GRACE_SECONDS = int(os.getenv("HEARTBEAT_GRACE_SECONDS", "150"))  # ~2.5 min
 
 
