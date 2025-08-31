@@ -11,7 +11,7 @@ OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 
 def main():
     parser = argparse.ArgumentParser(description="Run directory scrapers.")
-    parser.add_argument("--source", choices=["yelp", "gmaps"], required=True)
+    parser.add_argument("--source", choices=["gmaps"], required=True)
     parser.add_argument("--q", required=True, help="search term, e.g. 'plumbers'")
     parser.add_argument("--location", required=True, help='e.g. "Austin, TX"')
     parser.add_argument("--limit", type=int)
@@ -35,36 +35,46 @@ def main():
     parser.add_argument("--copy_to_run_dir", type=int, default=1, help="Copy results into run_dir (default=1)")
     parser.add_argument("--use_hunter_cache", type=int, default=1,
                         help="1=use cache for hits; 0=verify all fresh (cache still updated)")
+
+    parser.add_argument("--run_registry_dir", type=str, default=None,
+                        help="If set, overrides OUT_ROOT/runs for meta.json location")
+
     args = parser.parse_args()
 
     safe_q = args.q.replace(" ", "_")
     safe_loc_norm = args.location.replace(" ", "_").replace(",", "").lower()
 
+    os.makedirs(OUT_ROOT, exist_ok=True)
+    print(f"[PATH] OUT_ROOT={OUT_ROOT} (abs={os.path.abspath(OUT_ROOT)})", flush=True)
+
     if not args.outfile:
         args.outfile = os.path.join(OUT_ROOT, f"{args.source}_{safe_q}_{safe_loc_norm}.jsonl")
+    args.outfile = os.path.abspath(args.outfile)
+    print(f"[PATH] gmaps.jsonl.target={args.outfile}", flush=True)
 
     if args.source == "gmaps":
         asyncio.run(run_gmaps(args))
     else:
-        print(f"[ERROR] this source is currently not supported: {args.source}")
+        print(f"[ERROR] this source is currently not supported: {args.source}", flush=True)
+        raise SystemExit(1)
 
     verify_script = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "tools", "scrape_verify_only.py")
     )
+    print(f"[PATH] verify_script={verify_script}", flush=True)
 
     gmaps_jsonl_for_verifier = os.path.join(OUT_ROOT, f"gmaps_{safe_q}_{safe_loc_norm}.jsonl")
     gmaps_jsonl_for_verifier_abs = os.path.abspath(gmaps_jsonl_for_verifier)
+    print(f"[PATH] verifier.infile.expected={gmaps_jsonl_for_verifier_abs}", flush=True)
 
     if not os.path.exists(gmaps_jsonl_for_verifier_abs):
-        print(f"[ERROR] Expected infile for verifier not found: {gmaps_jsonl_for_verifier_abs}")
+        print(f"[ERROR] Expected infile for verifier not found: {gmaps_jsonl_for_verifier_abs}", flush=True)
         raise SystemExit(1)
 
     verify_outfile = os.path.join(OUT_ROOT, f"emails_{safe_q}_{safe_loc_norm}.jsonl")
     verify_outfile_abs = os.path.abspath(verify_outfile)
     os.makedirs(os.path.dirname(verify_outfile_abs), exist_ok=True)
-
-    print(f"\n[INFO] triggering scrape_verify_only.py on {gmaps_jsonl_for_verifier_abs} ...")
-    print(f"[INFO] writing email results to {verify_outfile_abs}\n")
+    print(f"[PATH] verifier.outfile.target={verify_outfile_abs}", flush=True)
 
     scraper_dir = os.path.abspath(os.path.dirname(__file__))
     project_root = os.path.abspath(os.path.join(scraper_dir, ".."))
@@ -74,12 +84,15 @@ def main():
     env["PYTHONPATH"] = os.pathsep.join(
         [scraper_dir, project_root] + ([existing_pp] if existing_pp else [])
     )
+    print(f"[ENV] PYTHONPATH={env['PYTHONPATH']}", flush=True)
 
-    run_registry_dir = os.path.join(OUT_ROOT, "runs")
-
-    print(f"[DEBUG] launching verifier with infile={gmaps_jsonl_for_verifier_abs}")
-    print(f"[DEBUG] launching verifier with out={verify_outfile_abs}")
-    print(f"[DEBUG] launching verifier with run_id={args.run_id} run_registry_dir={args.run_registry_dir}")
+    run_registry_dir = args.run_registry_dir or os.path.join(OUT_ROOT, "runs")
+    run_registry_dir = os.path.abspath(run_registry_dir)
+    os.makedirs(run_registry_dir, exist_ok=True)
+    print(f"[PATH] run_registry_dir={run_registry_dir}", flush=True)
+    print(f"[DEBUG] launching verifier with infile={gmaps_jsonl_for_verifier_abs}", flush=True)
+    print(f"[DEBUG] launching verifier with out={verify_outfile_abs}", flush=True)
+    print(f"[DEBUG] launching verifier with run_id={args.run_id}", flush=True)
 
     cmd = [
         sys.executable,
