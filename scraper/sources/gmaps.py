@@ -645,7 +645,7 @@ async def run_gmaps(args) -> None:
     ip_per_worker = int(getattr(args, "ip_per_worker", 0) or 0)
 
     q_full = f"{q} {loc}".strip()
-    outfile = os.path.join("out", f"gmaps_{q.replace(' ', '_')}_{loc.replace(' ', '_').replace(',', '').lower()}.jsonl")
+    outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
     run_id = getattr(args, "run_id", None) or new_run_id()
     run_dir_root = getattr(args, "run_registry_dir", None) or os.path.join(OUT_ROOT, "runs")
     run_dir = os.path.join(run_dir_root, run_id)
@@ -670,7 +670,7 @@ async def run_gmaps(args) -> None:
                 files={"gmaps_jsonl": os.path.join(run_dir, "gmaps.jsonl")},
                 counters={"queued": 0, "written": 0, "failures": 0}
                 )
-    out_dir = os.path.dirname(outfile) or OUT_ROOT
+    out_dir = OUT_ROOT
     logger = JsonLogger(out_dir, run_id)
 
     logger.info("[gmaps] job.start",
