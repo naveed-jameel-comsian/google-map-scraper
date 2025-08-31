@@ -77,6 +77,10 @@ def main():
 
     run_registry_dir = os.path.join(OUT_ROOT, "runs")
 
+    print(f"[DEBUG] launching verifier with infile={gmaps_jsonl_for_verifier_abs}")
+    print(f"[DEBUG] launching verifier with out={verify_outfile_abs}")
+    print(f"[DEBUG] launching verifier with run_id={args.run_id} run_registry_dir={args.run_registry_dir}")
+
     cmd = [
         sys.executable,
         verify_script,

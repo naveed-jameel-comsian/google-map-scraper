@@ -651,6 +651,10 @@ async def run_gmaps(args) -> None:
     run_dir = os.path.join(run_dir_root, run_id)
     _ensure_dir(run_dir)
     meta_path = os.path.join(run_dir, "meta.json")
+    print(f"[DEBUG] gmaps run_dir = {os.path.abspath(run_dir)}")
+    print(f"[DEBUG] gmaps meta_path = {os.path.abspath(meta_path)}")
+    print(f"[DEBUG] gmaps dashboard.log path = {os.path.abspath(os.path.join(run_dir, 'dashboard.log'))}")
+    print(f"[DEBUG] gmaps outfile = {os.path.abspath(outfile)}")
 
     outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
 

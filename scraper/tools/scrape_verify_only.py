@@ -96,6 +96,7 @@ def _write_json(path: str, obj: dict) -> None:
 
 
 def _append_meta(path: str, **kv) -> None:
+    print(f"[DEBUG] _append_meta writing to {os.path.abspath(path)} with keys={list(kv.keys())}")
     meta = {}
     if os.path.exists(path):
         with contextlib.suppress(Exception):
@@ -738,6 +739,11 @@ def main():
     )
 
     run_emails_path = files["emails_jsonl"]
+
+    print(f"[DEBUG] verifier run_dir = {os.path.abspath(run_dir)}")
+    print(f"[DEBUG] verifier meta_path = {os.path.abspath(meta_path)}")
+    print(f"[DEBUG] verifier emails_jsonl = {os.path.abspath(run_emails_path)}")
+    print(f"[DEBUG] verifier emails_csv = {os.path.abspath(files['emails_csv'])}")
 
     processed = 0
     verified_total = 0
