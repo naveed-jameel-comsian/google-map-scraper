@@ -34,7 +34,7 @@ except Exception:
 
     def new_run_id() -> str:
         return time.strftime("run_%Y%m%d_%H%M%S")
-
+OUT_ROOT = os.getenv("OUT_ROOT", "/out")
 MAX_PAGES = 20
 TIMEOUT = 15.0
 INCLUDE_EXTERNAL = False
@@ -44,11 +44,11 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-VERIFIER_CACHE_PATH = os.path.join("out", "hunter_verifier_cache.jsonl")
+VERIFIER_CACHE_PATH = os.path.join(OUT_ROOT, "hunter_verifier_cache.jsonl")
 VERIFIER_CACHE_LOCK = asyncio.Lock()
 
 RESULTS_FILE_LOCK = asyncio.Lock()
-DEFAULT_RESULTS_PATH = os.path.join("out", "scrape_verify_results.jsonl")
+DEFAULT_RESULTS_PATH = os.path.join(OUT_ROOT, "scrape_verify_results.jsonl")
 
 _PLACEHOLDER_SUBSTR = (
     "example@", "your.name@", "firstname.lastname@", "first.last@", "name@domain.com",
@@ -564,8 +564,9 @@ def parse_args():
     p.add_argument("--verify-concurrency", type=int, default=3, help="Parallel Hunter verifications.")
 
     p.add_argument("--run-id", type=str, default=None, help="Join an existing run id (for meta.json/log coherence).")
-    p.add_argument("--run-registry-dir", type=str, default="out/runs",
-                   help="Root directory that holds run folders (default: out/runs).")
+    p.add_argument("--run-registry-dir", type=str,
+                   default=os.path.join(OUT_ROOT, "runs"),
+                   help="Root directory that holds run folders (default: OUT_ROOT/runs).")
 
     p.add_argument("--use-hunter-cache", type=int, default=1, dest="use_hunter_cache",
                    help="1=use cache for hits; 0=verify all fresh (cache still updated)"

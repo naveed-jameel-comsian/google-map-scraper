@@ -17,6 +17,7 @@ from core.telemetry import JsonLogger, new_run_id
 import shutil
 
 HARD_WORKER_TIMEOUT = 90
+OUT_ROOT = os.getenv("OUT_ROOT", "/out")
 
 
 def _normloc_for_filename(loc: str) -> str:
@@ -646,12 +647,12 @@ async def run_gmaps(args) -> None:
     q_full = f"{q} {loc}".strip()
     outfile = os.path.join("out", f"gmaps_{q.replace(' ', '_')}_{loc.replace(' ', '_').replace(',', '').lower()}.jsonl")
     run_id = getattr(args, "run_id", None) or new_run_id()
-    run_dir_root = getattr(args, "run_registry_dir", None) or "out/runs"
+    run_dir_root = getattr(args, "run_registry_dir", None) or os.path.join(OUT_ROOT, "runs")
     run_dir = os.path.join(run_dir_root, run_id)
     _ensure_dir(run_dir)
     meta_path = os.path.join(run_dir, "meta.json")
 
-    outfile = os.path.join("out", f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
+    outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
 
     started_ts = ts()
     _write_meta(meta_path,
@@ -669,7 +670,7 @@ async def run_gmaps(args) -> None:
                 files={"gmaps_jsonl": os.path.join(run_dir, "gmaps.jsonl")},
                 counters={"queued": 0, "written": 0, "failures": 0}
                 )
-    out_dir = os.path.dirname(outfile) or "out"
+    out_dir = os.path.dirname(outfile) or OUT_ROOT
     logger = JsonLogger(out_dir, run_id)
 
     logger.info("[gmaps] job.start",
@@ -891,7 +892,7 @@ async def run_gmaps(args) -> None:
                         written=written, still_failed=len(failures))
 
         if failures:
-            fail_path = os.path.join(out_dir, f"failures_{run_id}.jsonl")
+            fail_path = os.path.join(OUT_ROOT, f"failures_{run_id}.jsonl")
             with open(fail_path, "a", encoding="utf-8") as f:
                 for h, reason in failures:
                     f.write(json.dumps({"href": h, "reason": reason}) + "\n")
