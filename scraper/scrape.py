@@ -43,7 +43,7 @@ def main():
         outfile = f"out/{args.source}_{safe_q}_{safe_loc}.jsonl"
         args.outfile = outfile
 
-    elif args.source == "gmaps":
+    if args.source == "gmaps":
         asyncio.run(run_gmaps(args))
 
     # --- after scraping (or when skipping), auto-trigger email verifier ---
