@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+    <h2>Logs — {{ search_term }} — {{ search_location }} — <code>{{ run_id }}</code></h2>
+    <pre id="logbox" class="logbox"
+         style="white-space: pre-wrap; background:#0b0b0b; color:#e6e6e6; padding:12px; border-radius:8px; max-height:75vh; overflow:auto;">Loading…</pre>
+</section>
+
+<script>
+    (function () {
+        const runId = {
+        {
+            run_id | tojson
+        }
+    }
+        ;
+        const url = `/download/${runId}/dashboard.log`;
+        const box = document.getElementById('logbox');
+
+        fetch(url, {cache: "no-store"})
+            .then(res => res.ok ? res.text() : Promise.reject(`HTTP ${res.status}`))
+            .then(text => {
+                box.textContent = text || "(empty)";
+            })
+            .catch(err => {
+                box.textContent = `Log not found or error: ${err}`;
+            });
+    })();
+</script>
+
+{% endblock %}

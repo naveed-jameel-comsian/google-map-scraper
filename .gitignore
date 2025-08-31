@@ -1,0 +1,11 @@
+
+/local_settings.py
+/.venv
+/out/
+/logs/
+__pycache__/
+*.pyc
+*.log
+*.env
+.DS_Store
+.idea/

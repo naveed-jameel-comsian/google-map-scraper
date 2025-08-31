@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block head_extras %}
+<title>{{ title }}</title>
+<style>
+    .log-toolbar {
+        display: flex;
+        gap: .5rem;
+        align-items: center;
+        margin-bottom: .75rem;
+        flex-wrap: wrap;
+    }
+
+    .log-box {
+        border: 1px solid var(--border, #e5e7eb);
+        background: #0b0f14;
+        color: #e5e7eb;
+        border-radius: .5rem;
+        padding: .75rem;
+        max-height: calc(100vh - 220px);
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre;
+        tab-size: 2;
+    }
+
+    .muted {
+        opacity: .65;
+    }
+
+    .btn-sm {
+        padding: .35rem .6rem;
+        font-size: .9rem;
+        border-radius: .5rem;
+        border: 1px solid var(--border, #e5e7eb);
+        background: white;
+        cursor: pointer;
+    }
+
+    .btn-sm[disabled] {
+        opacity: .5;
+        cursor: not-allowed;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="card">
+    <h2>Logs — {{ title }}</h2>
+
+    <div class="log-toolbar">
+        <button class="btn-sm" id="wrapBtn" type="button">Toggle wrap</button>
+        <button class="btn-sm" id="copyBtn" type="button" {% if not has_log %}disabled{% endif %}>Copy all</button>
+        <button class="btn-sm" id="topBtn" type="button">Top</button>
+        <button class="btn-sm" id="botBtn" type="button">Bottom</button>
+        {% if has_log and download_href %}
+        <a class="btn-sm" href="{{ download_href }}">Download raw</a>
+        {% else %}
+        <button class="btn-sm" disabled title="No log to download">Download raw</button>
+        {% endif %}
+        <span class="muted">Historical snapshot (no auto-refresh)</span>
+    </div>
+
+    <div id="logBox" class="log-box">{{ log_text }}</div>
+</section>
+
+<script>
+    const box = document.getElementById('logBox');
+
+    document.getElementById('wrapBtn').addEventListener('click', () => {
+        const now = getComputedStyle(box).whiteSpace;
+        box.style.whiteSpace = (now === 'pre') ? 'pre-wrap' : 'pre';
+    });
+
+    document.getElementById('topBtn').addEventListener('click', () => box.scrollTo({top: 0, behavior: 'smooth'}));
+    document.getElementById('botBtn').addEventListener('click', () => box.scrollTo({
+        top: box.scrollHeight,
+        behavior: 'smooth'
+    }));
+
+    const copyBtn = document.getElementById('copyBtn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(box.textContent || '');
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => copyBtn.textContent = 'Copy all', 1200);
+            } catch (e) {
+                copyBtn.textContent = 'Copy failed';
+                setTimeout(() => copyBtn.textContent = 'Copy all', 1200);
+            }
+        });
+    }
+</script>
+{% endblock %}

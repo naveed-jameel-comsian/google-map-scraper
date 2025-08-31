@@ -1,0 +1,39 @@
+<table class="table">
+    <thead>
+    <tr>
+        <th>Run ID</th>
+        <th>Query</th>
+        <th>Status</th>
+        <th>Phase</th>
+        <th>Counts</th>
+        <th>Logs</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for r in runs %}
+    <tr>
+        <td><code>{{ r.run_id }}</code></td>
+        <td>
+            <div>{{ r.search_term }} — {{ r.search_location }}</div>
+            <div class="muted small">{{ r.started_at }}</div>
+        </td>
+        <td><span class="badge badge-blue">Running</span></td>
+        <td>{{r.phase}}</td>
+        <td>
+            <div>Queued: {{ r.queued or 0 }}</div>
+            <div>Written: {{ r.written or 0 }}</div>
+            <div>Failures: {{ r.failures or 0 }}</div>
+            <div>Sites: {{ r.sites_processed or 0 }}</div>
+            <div>Emails: {{ r.emails_verified or 0 }}</div>
+        </td>
+        <td>
+            {% if r.has_log %}
+            <a class="btn btn-sm" href="/log_live/{{ r.run_id }}" target="_blank">View</a>
+            {% else %}
+            <span class="btn btn-sm disabled" title="log does not exist yet" aria-disabled="true">View</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>

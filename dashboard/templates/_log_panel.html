@@ -1,0 +1,6 @@
+<pre id="log-panel"
+     class="log-box"
+     hx-get="/log/{{ run_id }}"
+     hx-trigger="load, every 2s"
+     hx-target="#log-panel"
+     hx-swap="innerHTML">Loading logs for {{ run_id }}…</pre>

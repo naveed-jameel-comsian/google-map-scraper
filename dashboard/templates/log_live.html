@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card"
+         id="logctx"
+         data-run-id="{{ run_id }}"
+         data-q="{{ search_term }}"
+         data-loc="{{ search_location }}">
+    <h2>
+        Live Logs — {{ search_term }} — {{ search_location }} —
+        <code>{{ run_id }}</code>
+    </h2>
+    <div class="muted small">This page refreshes automatically.</div>
+    <pre id="logbox"
+         class="logbox"
+         style="white-space: pre-wrap; background:#0b0b0b; color:#e6e6e6; padding:12px; border-radius:8px; max-height:75vh; overflow:auto;">Loading…</pre>
+</section>
+
+<script>
+    (function () {
+        const ctx = document.getElementById('logctx');
+        if (!ctx) return;
+
+        const runId = (ctx.dataset.runId || '').trim();
+        const box = document.getElementById('logbox');
+
+        if (!runId) {
+            box.textContent = "Error: run id missing.";
+            return;
+        }
+
+        const urlBase = `/download/${encodeURIComponent(runId)}/dashboard.log`;
+
+        async function refresh() {
+            try {
+                const res = await fetch(`${urlBase}?t=${Date.now()}`, {
+                    cache: "no-store",
+                    headers: {"Cache-Control": "no-cache"}
+                });
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        box.textContent = "Log file not found yet. Waiting…";
+                    } else {
+                        box.textContent = `Error fetching log (HTTP ${res.status}).`;
+                    }
+                    return;
+                }
+                const text = await res.text();
+                box.textContent = text || "(empty)";
+                box.scrollTop = box.scrollHeight;
+            } catch (e) {
+                box.textContent = `Network error loading log: ${e}`;
+            }
+        }
+
+        refresh();
+        const timer = setInterval(refresh, 2000);
+        window.addEventListener('beforeunload', () => clearInterval(timer));
+    })();
+</script>
+
+{% endblock %}

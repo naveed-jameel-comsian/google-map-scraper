@@ -1,0 +1,69 @@
+<table class="table">
+    <thead>
+    <tr>
+        <th>Run ID</th>
+        <th>Query</th>
+        <th>Status</th>
+        <th>Phase</th>
+        <th style="width: 200px;">Counts</th>
+        <th>Downloads</th>
+        <th>Logs</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for r in runs %}
+    <tr>
+        <td><code>{{ r.run_id }}</code></td>
+        <td>
+            <div>{{ r.search_term }} — {{ r.search_location }}</div>
+            <div class="muted small">
+                {{ r.started_at }}{% if r.finished_at %} → {{ r.finished_at }}{% endif %}
+            </div>
+        </td>
+        <td>
+            {% if r.status == 'running' %}
+            <span class="badge badge-blue">Running</span>
+            {% else %}
+            <span class="badge badge-green">Done</span>
+            {% endif %}
+        </td>
+        <td>
+            {{r.phase}}
+        </td>
+        <td>
+            <div>Queued: {{ r.queued or 0 }}</div>
+            <div>Written: {{ r.written or 0 }}</div>
+            <div>Failures: {{ r.failures or 0 }}</div>
+            <div>Sites: {{ r.sites_processed or 0 }}</div>
+            <div>Emails: {{ r.emails_verified or 0 }}</div>
+        </td>
+        <td>
+            {% if r.has_gmaps_csv %}
+            <a class="btn btn-sm" href="/download/{{ r.run_id }}/{{ r.gmaps_csv }}">Download gmaps CSV</a>
+            {% else %}
+            <span class="btn btn-sm disabled" title="gmaps CSV does not exist"
+                  aria-disabled="true">Download gmaps CSV</span>
+            {% endif %}
+
+            {% if r.has_emails_csv %}
+            <a class="btn btn-sm" href="/download/{{ r.run_id }}/{{ r.emails_csv }}">Download emails CSV</a>
+            {% else %}
+            <span class="btn btn-sm disabled" title="emails CSV does not exist"
+                  aria-disabled="true">Download emails CSV</span>
+            {% endif %}
+        </td>
+        <td>
+            {% if r.has_log %}
+            {% if r.status == 'running' %}
+            <a class="btn btn-sm" href="/log_live/{{ r.run_id }}" target="_blank">View</a>
+            {% else %}
+            <a class="btn btn-sm" href="/log_view/{{ r.run_id }}" target="_blank">View</a>
+            {% endif %}
+            {% else %}
+            <span class="btn btn-sm disabled" title="log does not exist" aria-disabled="true">View</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>

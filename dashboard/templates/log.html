@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+    <h2>Logs · {{ run_id }}</h2>
+
+    {% if status == "running" %}
+    <pre class="logbox"
+         hx-get="/fragment/log_text/{{ run_id }}"
+         hx-trigger="load, every 2s"
+         hx-swap="innerHTML">Loading…</pre>
+    {% else %}
+    <pre class="logbox"
+         hx-get="/fragment/log_text/{{ run_id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">Loading…</pre>
+    {% endif %}
+</section>
+
+{% endblock %}
