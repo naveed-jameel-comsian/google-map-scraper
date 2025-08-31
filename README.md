@@ -1,23 +1,51 @@
+# Directory Scraper
 
-# Directory Scraper — Milestones 1 & 2
+A scraping + email verification pipeline with a FastAPI dashboard.  
+Currently supports **Google Maps** as the source for businesses, then scrapes and verifies emails from their websites.
+
+---
 
 ## Quickstart
-1) Create venv & install deps
-```
+
+### 1. Setup environment
+```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
 ```
-2) Configure Smartproxy
+
+### 2. Copy the example config and set your credentials:
 ```
 cp local_settings.py.example local_settings.py
-# Fill SMARTPROXY_* values from your Smartproxy dashboard.
+
+Fill in:
+	•	SMARTPROXY_* (if using Smartproxy for Maps scraping)
+	•	HUNTER_API_KEY (for email verification via Hunter)
 ```
-3) Demo runs
+
+### 3. Run a scrape
+
+Scrape businesses from Google Maps:
+
 ```
-python scraper/scrape.py --source yelp  --q "dentists" --location "Dallas, TX" --limit 20
-python scraper/scrape.py --source gmaps --q "dentists" --location "Dallas, TX" --limit 20 --use_proxy 1 --proxy_mode rotating
+python scraper/gmaps.py --q "dentists" --location "Dallas, TX" --limit 20 --use_proxy 1 --proxy_mode rotating
+python scrape_verify_only.py --infile out/gmaps_dentists_dallas_tx.jsonl --run-id <RUN_ID>
 ```
-## Notes
-- Pagination and scroll progress are logged: `[yelp] page=N ...`, `[gmaps] scroll=N ...`.
-- Output is JSONL in `out/{source}_{slug(q)}_{slug(location)}.jsonl`.
+
+### 4. Outputs for each run are stored under:
+
+```
+out/runs/<RUN_ID>/
+├── gmaps.jsonl   # raw scraped businesses
+├── gmaps.csv     # CSV export of businesses
+├── emails.csv    # verified emails
+├── meta.json     # run metadata
+└── dashboard.log # structured logs
+```
+
+Note: After CSV export, the intermediate JSONL files are deleted to save storage.
+
+### 5. Start the FastAPI dashboard:
+```
+uvicorn dashboard.server.main:app --reload --port 8000
+```
