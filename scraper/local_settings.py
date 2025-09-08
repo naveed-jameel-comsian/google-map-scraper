@@ -9,4 +9,3 @@ SMARTPROXY_USER = "smart-a8fgn5ob7zs6_area-US_city-Omaha"
 SMARTPROXY_PASSWORD = "SheRGzESUfGroFDt"
 
 HUNTER_API_KEY = 'b46ad573287aeb978253e1d0f875acd93dca52e2'
-
