@@ -5,7 +5,7 @@ echo "🚀 Deployment started ..."
 
 # Move to the project folder directory
 echo "📂 Moving to project folder directory"
-cd /home/ubuntu/scrapper-project
+cd /home/ubuntu/scraper-project
 
 # Pull the latest version of the app
 echo "📥 Pulling latest changes..."
