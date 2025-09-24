@@ -784,7 +784,7 @@ async def run_gmaps(args) -> None:
     """
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
-    limit = int(getattr(args, "limit", 0) or 450)  # 0 = all
+    limit = int(getattr(args, "limit", 0) or 250)  # 0 = all
     concurrency = int(getattr(args, "concurrency", 8) or 8)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
