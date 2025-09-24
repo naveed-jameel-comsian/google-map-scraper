@@ -8,11 +8,13 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, cast, Callable, Awaitable
+from itertools import product
+import requests
 from urllib.parse import quote_plus, urlparse, parse_qsl, urlunparse, urlencode, urljoin
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
-from core.proxy import new_session, playwright_proxy_config
+from core.proxy import new_session, playwright_proxy_config, get_alternative_proxy_configs
 from core.telemetry import JsonLogger, new_run_id
 import shutil
 
@@ -90,6 +92,71 @@ class Metrics:
 
 def ts() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def test_proxy_connection(proxy_cfg: Optional[Dict[str, Any]]) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Test proxy connection by making a simple request to check IP.
+    Returns (success, working_config) - if primary fails, tries alternative configs.
+    """
+    if not proxy_cfg:
+        print(f"{ts()} | DEBUG   | [proxy_test] no proxy config provided")
+        return True, None
+    
+    # Test primary config
+    print(f"{ts()} | DEBUG   | [proxy_test] testing primary proxy: {proxy_cfg.get('server')}")
+    success, _ = await _test_single_proxy_config(proxy_cfg)
+    if success:
+        return True, proxy_cfg
+    
+    # Try alternative configurations
+    print(f"{ts()} | INFO    | [proxy_test] primary failed, trying alternative configs...")
+    alt_configs = get_alternative_proxy_configs(None)  # No session for testing
+    
+    for alt_cfg in alt_configs:
+        print(f"{ts()} | DEBUG   | [proxy_test] trying alternative: {alt_cfg.get('server')}")
+        success, _ = await _test_single_proxy_config(alt_cfg)
+        if success:
+            print(f"{ts()} | INFO    | [proxy_test] found working config: {alt_cfg.get('server')}")
+            return True, alt_cfg
+    
+    print(f"{ts()} | ERROR   | [proxy_test] all proxy configs failed")
+    return False, None
+
+
+async def _test_single_proxy_config(proxy_cfg: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Test a single proxy configuration.
+    Returns (success, response_info)
+    """
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True, proxy=proxy_cfg)
+            context = await browser.new_context()
+            page = await context.new_page()
+            
+            try:
+                await page.goto("https://api.ip.cc", timeout=10000)
+                content = await page.content()
+                print(f"{ts()} | DEBUG   | [proxy_test] response: {content[:200]}...")
+                
+                if "ip" in content.lower():
+                    print(f"{ts()} | INFO    | [proxy_test] proxy connection successful")
+                    return True, content
+                else:
+                    print(f"{ts()} | ERROR   | [proxy_test] proxy response doesn't contain IP info")
+                    return False, content
+                    
+            except Exception as e:
+                print(f"{ts()} | ERROR   | [proxy_test] failed to load test page: {e}")
+                return False, str(e)
+            finally:
+                await context.close()
+                await browser.close()
+                
+    except Exception as e:
+        print(f"{ts()} | ERROR   | [proxy_test] proxy test failed: {e}")
+        return False, str(e)
 
 
 def safe_int(x: Optional[str]) -> Optional[int]:
@@ -221,22 +288,35 @@ def _proxy_from_args(args) -> Optional[Dict[str, Any]]:
     if not getattr(args, "use_proxy", 0):
         print(f"{ts()} | INFO    | [proxy] OFF")
         return None
+    
     mode = getattr(args, "proxy_mode", None)
+    print(f"{ts()} | DEBUG   | [proxy] mode={mode}")
+    
     try:
         _ = new_session()
-    except Exception:
+        print(f"{ts()} | DEBUG   | [proxy] session creation successful")
+    except Exception as e:
+        print(f"{ts()} | ERROR   | [proxy] session creation failed: {e}")
         pass
+    
     try:
         cfg = playwright_proxy_config(mode)
+        print(f"{ts()} | DEBUG   | [proxy] playwright_proxy_config returned: {cfg}")
+        
         if not cfg or "server" not in cfg:
-            print(f"{ts()} | WARNING | [proxy] requested but credentials missing/invalid → running without proxy")
+            print(f"{ts()} | ERROR   | [proxy] requested but credentials missing/invalid → running without proxy")
+            print(f"{ts()} | DEBUG   | [proxy] cfg={cfg}, has_server={'server' in (cfg or {})}")
             return None
+        
         user_hint = cfg.get("username", "")
         safe_user = (user_hint[:6] + "…") if user_hint else ""
         print(f"{ts()} | INFO    | [proxy] ON  server={cfg.get('server')} user={safe_user}")
+        print(f"{ts()} | DEBUG   | [proxy] full config: server={cfg.get('server')}, username={cfg.get('username')}, has_password={bool(cfg.get('password'))}")
         return cfg
     except Exception as e:
-        print(f"{ts()} | WARNING | [proxy] requested but playwright_proxy_config raised: {e} → running without proxy")
+        print(f"{ts()} | ERROR   | [proxy] requested but playwright_proxy_config raised: {e} → running without proxy")
+        import traceback
+        print(f"{ts()} | DEBUG   | [proxy] traceback: {traceback.format_exc()}")
         return None
 
 
@@ -303,6 +383,7 @@ async def _scroll_results_feed(
         target: int = 0,
         max_scrolls: int = 120,
         min_growth: int = 10,
+        progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> None:
     feed = page.locator(SEL_RESULTS_FEED)
     try:
@@ -329,6 +410,9 @@ async def _scroll_results_feed(
         anchors = await page.locator(SEL_RESULT_ANCHORS).element_handles()
         count = len(anchors)
         print(f"{ts()} | INFO    | [gmaps] visible_anchors={count} scrolls={i}")
+        if progress_cb:
+            with contextlib.suppress(Exception):
+                await progress_cb(count, i)
 
         if first_count < 0:
             first_count = count
@@ -415,7 +499,8 @@ async def _click_next_page_if_present(
     return False
 
 
-async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_max: float) -> List[str]:
+async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_max: float,
+                                progress_cb: Optional[Callable[[Dict[str, int]], Awaitable[None]]] = None) -> List[str]:
     per_page_target = 180 if not limit else min(200, max(80, int(limit * 0.8)))
 
     BASE = "https://www.google.com"
@@ -443,14 +528,30 @@ async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_
 
     hrefs: List[str] = []
     pages_clicked = 0
+    # Allow traversing many more pages to collect more than ~100 hrefs
     hard_cap_pages = 8
 
     prev_len = -1
     no_growth_passes = 0
 
     while (not limit or len(hrefs) < limit) and pages_clicked <= hard_cap_pages:
-        await _scroll_results_feed(page, delay_min, delay_max,
-                                   target=per_page_target, max_scrolls=120, min_growth=10)
+        async def _scroll_cb(visible_anchors: int, scrolls: int):
+            if progress_cb:
+                await progress_cb({
+                    "visible_anchors": visible_anchors,
+                    "scrolls": scrolls,
+                    "hrefs_collected": len(hrefs),
+                })
+
+        await _scroll_results_feed(
+            page,
+            delay_min,
+            delay_max,
+            target=per_page_target,
+            max_scrolls=120,
+            min_growth=10,
+            progress_cb=_scroll_cb,
+        )
 
         current = await grab()
         if not hrefs and not current:
@@ -464,6 +565,12 @@ async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_
         hrefs = list(dict.fromkeys(hrefs + current))
         hrefs = dedupe_hrefs(hrefs)
         print(f"{ts()} | INFO    | [gmaps] collected {len(hrefs)} hrefs (target limit={limit})")
+        # Progress callback (hrefs tally)
+        if progress_cb:
+            with contextlib.suppress(Exception):
+                await progress_cb({
+                    "hrefs_collected": len(hrefs),
+                })
 
         if limit and len(hrefs) >= limit:
             break
@@ -480,12 +587,20 @@ async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_
         )
         if clicked:
             pages_clicked += 1
-            await _scroll_results_feed(page, delay_min, delay_max, target=per_page_target // 2, max_scrolls=40,
-                                       min_growth=5)
+            await _scroll_results_feed(
+                page,
+                delay_min,
+                delay_max,
+                target=per_page_target // 2,
+                max_scrolls=40,
+                min_growth=5,
+                progress_cb=_scroll_cb,
+            )
             await asyncio.sleep(random.uniform(0.5, 1.0))
             continue
 
-        if no_growth_passes >= 2:
+        # Aggressive early-break: stop after 2 consecutive no-growth passes
+        if no_growth_passes >= 1:
             break
 
     print(f"{ts()} | INFO    | [gmaps] final hrefs={len(hrefs)}")
@@ -493,9 +608,40 @@ async def _collect_anchor_hrefs(page: Page, limit: int, delay_min: float, delay_
 
 
 async def _click_consent_if_present(page: Page) -> None:
+    """
+    Try common consent/OAuth banners on Google domains.
+    - Clicks visible buttons with names like Accept/I agree/Allow all.
+    - Falls back to scanning iframes for such buttons.
+    """
+    selectors = [
+        re.compile(r"(Accept all|Accept|I agree|I’m in|Yes, I’m in|Allow all)", re.I),
+        re.compile(r"(AGREE|ACCEPT)", re.I),
+    ]
+    # Direct page first
+    for rx in selectors:
+        try:
+            btn = page.get_by_role("button", name=rx).first
+            if await btn.is_visible(timeout=1200):
+                await btn.click(timeout=2000)
+                await asyncio.sleep(0.2)
+                return
+        except Exception:
+            pass
+
+    # Some consent UIs are inside iframes
     try:
-        await page.get_by_role("button", name=re.compile(r"(Accept all|Accept|I agree)", re.I)).first.click(
-            timeout=3000)
+        for f in page.frames:
+            if f is page.main_frame:
+                continue
+            for rx in selectors:
+                try:
+                    btn = f.get_by_role("button", name=rx).first
+                    if await btn.is_visible(timeout=600):
+                        await btn.click(timeout=1500)
+                        await asyncio.sleep(0.2)
+                        return
+                except Exception:
+                    continue
     except Exception:
         pass
 
@@ -638,7 +784,7 @@ async def run_gmaps(args) -> None:
     """
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
-    limit = int(getattr(args, "limit", 0) or 0)  # 0 = all
+    limit = int(getattr(args, "limit", 0) or 450)  # 0 = all
     concurrency = int(getattr(args, "concurrency", 8) or 8)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
@@ -691,12 +837,27 @@ async def run_gmaps(args) -> None:
 
     async with async_playwright() as pw:
         if ip_per_worker:
-
+            print(f"{ts()} | DEBUG   | [gmaps] using ip_per_worker mode with {concurrency} workers")
             pool = BrowserPool(pw, args, concurrency)
             await pool.start()
             page: Page = await pool.contexts[0].new_page()
         else:
             proxy_cfg = _proxy_from_args(args)
+            
+            # Test proxy connection before proceeding
+            if proxy_cfg:
+                print(f"{ts()} | DEBUG   | [gmaps] testing proxy before starting...")
+                proxy_working, working_config = await test_proxy_connection(proxy_cfg)
+                if not proxy_working:
+                    print(f"{ts()} | WARNING | [gmaps] proxy test failed, but continuing anyway...")
+                else:
+                    print(f"{ts()} | INFO    | [gmaps] proxy test passed")
+                    # Use the working config if we found one
+                    if working_config and working_config != proxy_cfg:
+                        print(f"{ts()} | INFO    | [gmaps] using alternative proxy config: {working_config.get('server')}")
+                        proxy_cfg = working_config
+            
+            print(f"{ts()} | DEBUG   | [gmaps] launching browser with proxy_cfg={bool(proxy_cfg)}")
             browser: Browser = await pw.chromium.launch(headless=True, proxy=proxy_cfg)
             ctx: BrowserContext = await browser.new_context(
                 viewport={"width": 1440, "height": 900},
@@ -717,8 +878,263 @@ async def run_gmaps(args) -> None:
         except Exception:
             pass
 
-        hrefs = await _collect_anchor_hrefs(page, limit, dmin, dmax)
+        # Detect navigation failures early (commonly due to proxy misconfiguration)
+        try:
+            current_url = page.url
+            print(f"{ts()} | DEBUG   | [gmaps] initial page load - url={current_url}")
+        except Exception as e:
+            current_url = ""
+            print(f"{ts()} | ERROR   | [gmaps] failed to get page url: {e}")
+        
+        if not current_url or current_url.startswith("chrome-error://"):
+            print(f"{ts()} | ERROR   | [gmaps] navigation failed url={current_url or '(empty)'}")
+            print(f"{ts()} | DEBUG   | [gmaps] start_url was: {start_url}")
+            print(f"{ts()} | DEBUG   | [gmaps] proxy was enabled: {getattr(args, 'use_proxy', 0)}")
+            print(f"{ts()} | DEBUG   | [gmaps] ip_per_worker mode: {ip_per_worker}")
+            
+            # Log detailed error info
+            try:
+                page_content = await page.content()
+                print(f"{ts()} | DEBUG   | [gmaps] page content length: {len(page_content)}")
+                if "chrome-error" in page_content:
+                    print(f"{ts()} | ERROR   | [gmaps] chrome-error page detected")
+                if "blocked" in page_content.lower() or "access denied" in page_content.lower():
+                    print(f"{ts()} | ERROR   | [gmaps] access blocked page detected")
+            except Exception as e:
+                print(f"{ts()} | DEBUG   | [gmaps] could not get page content: {e}")
+            
+            # Retry once without proxy if a proxy was requested and we're not in ip_per_worker mode
+            if not ip_per_worker and getattr(args, "use_proxy", 0):
+                print(f"{ts()} | INFO    | [gmaps] retrying without proxy due to navigation failure ...")
+                try:
+                    with contextlib.suppress(Exception):
+                        await ctx.close()
+                        print(f"{ts()} | DEBUG   | [gmaps] closed browser context")
+                    with contextlib.suppress(Exception):
+                        await browser.close()
+                        print(f"{ts()} | DEBUG   | [gmaps] closed browser")
+                    
+                    print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
+                    browser = await pw.chromium.launch(headless=True, proxy=None)
+                    ctx = await browser.new_context(
+                        viewport={"width": 1440, "height": 900},
+                        device_scale_factor=1.0,
+                        locale="en-US",
+                        extra_http_headers={
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "User-Agent": GMAPS_DEFAULT_HEADERS["User-Agent"],
+                        },
+                    )
+                    ctx.set_default_timeout(8000)
+                    ctx.set_default_navigation_timeout(15000)
+                    page = await ctx.new_page()
+                    print(f"{ts()} | DEBUG   | [gmaps] retrying navigation to {start_url}")
+                    
+                    try:
+                        await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+                        await _click_consent_if_present(page)
+                        current_url = page.url
+                        print(f"{ts()} | DEBUG   | [gmaps] retry successful - url={current_url}")
+                    except Exception as e:
+                        current_url = ""
+                        print(f"{ts()} | ERROR   | [gmaps] retry navigation failed: {e}")
+                        import traceback
+                        print(f"{ts()} | DEBUG   | [gmaps] retry traceback: {traceback.format_exc()}")
+                except Exception as e:
+                    print(f"{ts()} | ERROR   | [gmaps] browser retry setup failed: {e}")
+                    import traceback
+                    print(f"{ts()} | DEBUG   | [gmaps] browser retry traceback: {traceback.format_exc()}")
+            
+            if not current_url or current_url.startswith("chrome-error://"):
+                print(f"{ts()} | ERROR   | [gmaps] still cannot load Google Maps. Check proxy creds or run with --use_proxy 0")
+                print(f"{ts()} | DEBUG   | [gmaps] final current_url: {current_url}")
+                logger.error("[gmaps] startup.navigation_failed", start_url=start_url, final_url=current_url)
+                logger.close()
+                # Mark run as failed and exit early
+                _append_meta(meta_path,
+                             status="done",
+                             phase="maps_scraping_failed",
+                             counters={"queued": 0, "written": 0, "failures": 0},
+                             error=f"navigation_failed: {current_url}")
+                if ip_per_worker:
+                    await pool.close()
+                else:
+                    with contextlib.suppress(Exception):
+                        await ctx.close()
+                    with contextlib.suppress(Exception):
+                        await browser.close()
+                return
+
+        # 1) Collect hrefs for the main query with progress updates to meta
+        async def _progress_update(payload: Dict[str, int]) -> None:
+            try:
+                # Enrich with active query and cumulative hrefs
+                payload2 = dict(payload)
+                payload2["query"] = q_full
+                payload2["hrefs_total"] = payload.get("hrefs_collected", 0)
+                _append_meta(meta_path, gmaps_progress=payload2, last_heartbeat=ts())
+            except Exception:
+                pass
+
+        hrefs = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update)
         hrefs = dedupe_hrefs(hrefs)
+
+        # 2) If results are few and limit is high, broaden with query/location variants
+        def _singular_plural_variants(term: str) -> List[str]:
+            t = (term or "").strip()
+            out = {t}
+            if not t:
+                return []
+            if t.endswith("ies"):
+                out.add(t[:-3] + "y")
+            if t.endswith("ses") or t.endswith("xes"):
+                out.add(t[:-2])
+            if t.endswith("s") and len(t) > 3:
+                out.add(t[:-1])
+            else:
+                out.add(t + "s")
+            return [x for x in out if x]
+
+        def _query_variants(base_q: str) -> List[str]:
+            base_q = (base_q or "").strip()
+            words = base_q.split()
+            variants: List[str] = []
+            # Fetch dynamic related terms via Datamuse (no API key). Best-effort; ignore on error.
+            def _datamuse_terms(term: str) -> List[str]:
+                try:
+                    resp = requests.get(
+                        "https://api.datamuse.com/words",
+                        params={"ml": term, "max": 8},
+                        timeout=5.0,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json() or []
+                        out: List[str] = []
+                        for obj in data:
+                            w = (obj.get("word") or "").strip()
+                            if w and 2 <= len(w) <= 40 and all(c.isalnum() or c.isspace() for c in w):
+                                out.append(w)
+                        return out[:6]
+                except Exception:
+                    pass
+                return []
+            if base_q:
+                variants.append(base_q)
+            if 0 < len(words) <= 2:
+                toggles: List[List[str]] = []
+                for w in words:
+                    toggles.append(_singular_plural_variants(w))
+                for combo in product(*toggles):
+                    variants.append(" ".join(combo))
+            if len(words) == 1:
+                key = words[0].lower().rstrip('s')
+                for syn in _datamuse_terms(key):
+                    variants.append(syn)
+            seen = set()
+            out: List[str] = []
+            for v in variants:
+                v2 = " ".join(v.split())
+                if v2 and v2.lower() not in seen:
+                    out.append(v2)
+                    seen.add(v2.lower())
+            return out[:10]
+
+        def _location_variants(base_loc: str) -> List[str]:
+            base_loc = (base_loc or "").strip()
+            out: List[str] = []
+            # Geocode and nearby cities via Nominatim/Overpass (best-effort)
+            def _geocode(loc_text: str) -> Optional[Tuple[float, float]]:
+                try:
+                    resp = requests.get(
+                        "https://nominatim.openstreetmap.org/search",
+                        params={"q": loc_text, "format": "json", "limit": 1},
+                        headers={"User-Agent": "gmaps-scraper/1.0"},
+                        timeout=7.0,
+                    )
+                    if resp.status_code == 200:
+                        js = resp.json() or []
+                        if js:
+                            return float(js[0]["lat"]), float(js[0]["lon"])
+                except Exception:
+                    return None
+                return None
+
+            def _nearby_cities(lat: float, lon: float, radius_km: int = 40) -> List[str]:
+                try:
+                    overpass = "https://overpass-api.de/api/interpreter"
+                    q = (
+                        f"[out:json][timeout:15];("
+                        f"node[\"place\"~\"city|town\"](around:{radius_km*1000},{lat},{lon});"
+                        f");out tags 20;"
+                    )
+                    resp = requests.post(overpass, data={"data": q}, timeout=15.0)
+                    if resp.status_code == 200:
+                        js = resp.json() or {}
+                        out: List[str] = []
+                        for el in js.get("elements", []):
+                            name = (el.get("tags", {}).get("name") or "").strip()
+                            if name:
+                                out.append(name)
+                        return out[:8]
+                except Exception:
+                    return []
+                return []
+            if base_loc:
+                out.append(base_loc)
+                out.append(f"near {base_loc}")
+                city_only = base_loc.split(',')[0].strip()
+                if city_only and city_only.lower() != base_loc.lower():
+                    out.append(city_only)
+                    out.append(f"{city_only} area")
+                parts = [p.strip() for p in base_loc.split(',')]
+                if len(parts) >= 2:
+                    state_only = parts[-1]
+                    if state_only:
+                        out.append(state_only)
+                # dynamic nearby cities
+                geo = _geocode(base_loc)
+                if geo:
+                    lat, lon = geo
+                    for city in _nearby_cities(lat, lon):
+                        out.append(city)
+                        out.append(f"near {city}")
+            seen = set()
+            uniq: List[str] = []
+            for v in out:
+                k = v.lower()
+                if k not in seen:
+                    uniq.append(v)
+                    seen.add(k)
+            return uniq[:8]
+
+        if (limit == 0 or len(hrefs) < min(limit, 400)):
+            q_variants = _query_variants(q)
+            loc_variants = _location_variants(loc) or [""]
+            for qi, li in product(q_variants, loc_variants):
+                if 0 < limit <= len(hrefs):
+                    break
+                qv = f"{qi} {li}".strip()
+                if qv.lower() == q_full.lower():
+                    continue
+                url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(qv)}")
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    await _click_consent_if_present(page)
+                except Exception:
+                    continue
+                print(f"{ts()} | DEBUG   | [gmaps] variant query='{qv}'")
+                async def _progress_update_v(payload: Dict[str, int]) -> None:
+                    try:
+                        p2 = dict(payload)
+                        p2["query"] = qv
+                        p2["hrefs_total"] = len(hrefs)
+                        _append_meta(meta_path, gmaps_progress=p2, last_heartbeat=ts())
+                    except Exception:
+                        pass
+                more = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update_v)
+                if more:
+                    hrefs = dedupe_hrefs(list(dict.fromkeys(hrefs + more)))
+                    print(f"{ts()} | INFO    | [gmaps] hrefs.accumulated={len(hrefs)}")
 
         metrics = Metrics()
         failures = []

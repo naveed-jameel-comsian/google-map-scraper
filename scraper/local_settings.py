@@ -5,8 +5,8 @@ DEFAULT_PROXY_MODE = "sticky"
 
 SMARTPROXY_HOST = "proxy.smartproxy.net"
 SMARTPROXY_PORT = 3120
-SMARTPROXY_USER = "smart-a8fgn5ob7zs6_area-US_city-Omaha"
-SMARTPROXY_PASSWORD = "SheRGzESUfGroFDt"
+SMARTPROXY_USER = "smart-scraper"
+SMARTPROXY_PASSWORD = "naveed155"
 
 HUNTER_API_KEY = 'b46ad573287aeb978253e1d0f875acd93dca52e2'
 

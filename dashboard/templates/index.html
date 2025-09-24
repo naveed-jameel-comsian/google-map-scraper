@@ -22,8 +22,14 @@
                     <option value="0">No</option>
                 </select>
             </label>
+            <!-- <label>Proxy mode
+                <select name="proxy_mode">
+                    <option value="rotating">Rotating</option>
+                    <option value="sticky" selected>Sticky</option>
+                </select>
+            </label> -->
             <label>Concurrency
-                <input type="number" name="concurrency" value="25" min="1" max="64"/>
+                <input type="number" name="concurrency" value="35" min="1" max="64"/>
             </label>
             <label>IP per worker
                 <select name="ip_per_worker">
@@ -48,6 +54,12 @@
                     <option value="1" selected>Yes</option>
                     <option value="0">No (fresh verify)</option>
                 </select>
+            </label>
+            <label>Verify concurrency
+                <input type="number" name="verify_concurrency" value="15" min="1" max="64"/>
+            </label>
+            <label>Max pages per site
+                <input type="number" name="max_pages" value="30" min="1" max="200"/>
             </label>
             <label>Run ID (optional)
                 <input type="text" name="run_id" placeholder="e.g. my_custom_runid"/>

@@ -9,6 +9,9 @@ from fastapi.templating import Jinja2Templates
 from .settings import RUNS_DIR, STATIC_DIR, TEMPLATES_DIR
 from .tasks import launch_scrape
 from .utils import read_json_safe, list_run_dirs, count_jsonl_lines, safe_child_path
+import os
+import signal
+import shutil
 
 app = FastAPI(title="Scraper Dashboard")
 
@@ -63,6 +66,10 @@ def launch(
         delay_max: float = Form(0.15),
         max_retries: int = Form(2),
         retry_backoff: float = Form(1.6),
+        verify_concurrency: int = Form(3),
+        max_pages: int = Form(20),
+        use_hunter_cache: int = Form(1),
+        proxy_mode: str = Form("rotating"),
         run_id: str = Form(""),
 ):
     launch_info = launch_scrape(
@@ -76,6 +83,10 @@ def launch(
         delay_max=delay_max,
         max_retries=max_retries,
         retry_backoff=retry_backoff,
+        verify_concurrency=verify_concurrency,
+        max_pages=max_pages,
+        use_hunter_cache=use_hunter_cache,
+        proxy_mode=proxy_mode,
         run_id=run_id or None,
     )
     html = f"""
@@ -287,6 +298,7 @@ def _collect_runs() -> List[Dict[str, Any]]:
             "queued": counters.get("queued"),
             "written": written,
             "failures": counters.get("failures"),
+            "gmaps_progress": meta.get("gmaps_progress") or {},
             'sites_processed': sites_processed,
             'emails_verified': emails_verified,
             "files": files,

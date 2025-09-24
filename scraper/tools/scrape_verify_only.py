@@ -168,32 +168,51 @@ async def fetch(client: httpx.AsyncClient, url: str, retries: int = 2) -> Option
     """
     backoff = 1.5
     attempt = 0
+    print(f"{ts()} | DEBUG   | [fetch] starting fetch for {url}")
+    
     while attempt <= retries:
         try:
+            print(f"{ts()} | DEBUG   | [fetch] attempt {attempt + 1}/{retries + 1} for {url}")
             r = await client.get(
                 url,
                 headers=DEFAULT_HEADERS,
                 timeout=TIMEOUT,
                 follow_redirects=True,
             )
+            
+            print(f"{ts()} | DEBUG   | [fetch] response status {r.status_code} for {url}")
+            
             if r.status_code in (429, 408) or (500 <= r.status_code < 600):
+                print(f"{ts()} | WARN    | [fetch] retryable status {r.status_code} for {url}")
                 raise httpx.HTTPStatusError(
                     f"retryable status: {r.status_code}", request=r.request, response=r
                 )
 
             if 200 <= r.status_code < 400:
                 ct = r.headers.get("content-type", "").lower()
+                print(f"{ts()} | DEBUG   | [fetch] content-type: {ct} for {url}")
                 if ct.startswith("text/html") or ct.startswith("application/xhtml"):
+                    content_len = len(r.text or "")
+                    print(f"{ts()} | DEBUG   | [fetch] success: {content_len} chars for {url}")
                     return r.text or ""
+                else:
+                    print(f"{ts()} | WARN    | [fetch] non-HTML content-type {ct} for {url}")
+            else:
+                print(f"{ts()} | WARN    | [fetch] non-success status {r.status_code} for {url}")
             return None
 
-        except (httpx.RequestError, httpx.TimeoutException, httpx.HTTPStatusError):
+        except (httpx.RequestError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            print(f"{ts()} | ERROR   | [fetch] request error (attempt {attempt + 1}): {type(e).__name__}: {e} for {url}")
             if attempt >= retries:
+                print(f"{ts()} | ERROR   | [fetch] max retries reached for {url}")
                 return None
             await asyncio.sleep(backoff)
             backoff = min(backoff * 1.5, 8.0)
             attempt += 1
-        except Exception:
+        except Exception as e:
+            print(f"{ts()} | ERROR   | [fetch] unexpected error: {type(e).__name__}: {e} for {url}")
+            import traceback
+            print(f"{ts()} | DEBUG   | [fetch] traceback: {traceback.format_exc()}")
             return None
     return None
 
@@ -319,20 +338,31 @@ def _save_verifier_cache(entries: List[Dict]) -> None:
 
 async def hunter_verify(client: httpx.AsyncClient, email: str) -> Optional[Dict]:
     if not HUNTER_API_KEY:
+        print(f"{ts()} | WARN    | [hunter] no API key configured for {email}")
         return None
+    
     url = "https://api.hunter.io/v2/email-verifier"
     params = {"email": email, "api_key": HUNTER_API_KEY}
     backoff = 1.5
     tries = 0
+    
+    print(f"{ts()} | DEBUG   | [hunter] verifying {email}")
+    
     while True:
         tries += 1
         try:
+            print(f"{ts()} | DEBUG   | [hunter] attempt {tries} for {email}")
             r = await client.get(url, params=params, timeout=30.0)
+            
+            print(f"{ts()} | DEBUG   | [hunter] response status {r.status_code} for {email}")
+            
             if r.status_code == 200:
                 data = r.json().get("data") or {}
+                status = data.get("status")
+                print(f"{ts()} | DEBUG   | [hunter] success for {email}: status={status}, score={data.get('score')}")
                 return {
                     "email": email,
-                    "status": data.get("status"),
+                    "status": status,
                     "score": data.get("score"),
                     "accept_all": data.get("accept_all"),
                     "disposable": data.get("disposable"),
@@ -340,12 +370,40 @@ async def hunter_verify(client: httpx.AsyncClient, email: str) -> Optional[Dict]
                     "mx_records": data.get("mx_records"),
                     "smtp_check": data.get("smtp_check"),
                 }
+            
             if r.status_code == 429:
+                print(f"{ts()} | WARN    | [hunter] rate limited for {email}, backing off {backoff}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 1.5, 30.0)
                 continue
+            
+            if r.status_code == 401:
+                print(f"{ts()} | ERROR   | [hunter] unauthorized (check API key) for {email}")
+                return None
+            
+            if r.status_code == 403:
+                print(f"{ts()} | ERROR   | [hunter] forbidden (quota exceeded?) for {email}")
+                return None
+            
+            print(f"{ts()} | ERROR   | [hunter] unexpected status {r.status_code} for {email}")
+            try:
+                error_data = r.json()
+                print(f"{ts()} | DEBUG   | [hunter] error response: {error_data}")
+            except Exception:
+                print(f"{ts()} | DEBUG   | [hunter] non-JSON error response")
             return None
-        except Exception:
+            
+        except httpx.TimeoutException:
+            print(f"{ts()} | ERROR   | [hunter] timeout for {email} (attempt {tries})")
+            if tries >= 3:
+                print(f"{ts()} | ERROR   | [hunter] max retries reached for {email}")
+                return None
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 1.5, 30.0)
+        except Exception as e:
+            print(f"{ts()} | ERROR   | [hunter] unexpected error for {email}: {type(e).__name__}: {e}")
+            import traceback
+            print(f"{ts()} | DEBUG   | [hunter] traceback: {traceback.format_exc()}")
             if tries >= 3:
                 return None
             await asyncio.sleep(backoff)
@@ -548,6 +606,33 @@ def _emails_jsonl_to_csv(jsonl_path: str, csv_path: str) -> None:
             w.writerow(r)
 
 
+def _export_unique_emails_csv(run_emails_jsonl: str, unique_csv_path: str) -> int:
+    """
+    Read per-site results JSONL and export a flat, de-duplicated list of verified emails.
+    CSV columns: email, source_site, source_name
+    Returns number of unique emails exported.
+    """
+    uniq: dict[str, Tuple[str, str]] = {}
+    with open(run_emails_jsonl, "r", encoding="utf-8") as f:
+        for line in f:
+            with contextlib.suppress(Exception):
+                obj = json.loads(line)
+                site = (obj.get("website") or "").strip()
+                name = (obj.get("name") or "").strip()
+                for e in (obj.get("verified_emails") or []):
+                    k = e.lower()
+                    if k and k not in uniq:
+                        uniq[k] = (site, name)
+
+    _ensure_dir(os.path.dirname(unique_csv_path))
+    with open(unique_csv_path, "w", newline="", encoding="utf-8") as out:
+        w = csv.DictWriter(out, fieldnames=["email", "source_site", "source_name"])
+        w.writeheader()
+        for email, (site, name) in sorted(uniq.items()):
+            w.writerow({"email": email, "source_site": site, "source_name": name})
+    return len(uniq)
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Scrape emails from site(s) and verify via Hunter (cached).")
     g = p.add_mutually_exclusive_group(required=True)
@@ -722,6 +807,7 @@ def main():
     files = _safe_load_json(meta_path).get("files", {})
     files.setdefault("emails_jsonl", os.path.join(run_dir, "emails.jsonl"))
     files.setdefault("emails_csv", os.path.join(run_dir, "emails.csv"))
+    files.setdefault("unique_emails_csv", os.path.join(run_dir, "unique_emails.csv"))
 
     out_dir = os.path.dirname(args.out) or "out"
     logger = JsonLogger(out_dir, run_id) if JsonLogger else None
@@ -761,6 +847,8 @@ def main():
         try:
             _emails_jsonl_to_csv(run_emails_path, files["emails_csv"])
             info(f"emails CSV exported → {files['emails_csv']}")
+            nuniq = _export_unique_emails_csv(run_emails_path, files["unique_emails_csv"])
+            info(f"unique emails CSV exported ({nuniq}) → {files['unique_emails_csv']}")
             csv_export_ok = True
         except Exception as e:
             warn(f"emails CSV export failed: {e}")

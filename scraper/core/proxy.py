@@ -28,18 +28,15 @@ def new_session(mode: str = "sticky") -> Optional[str]:
 def _compose_username(base_user: str, session: Optional[str]) -> str:
     """
     Many residential proxies accept session encoded into username.
-    Adjust this pattern to match your Smartproxy account’s requirements.
+    Adjust this pattern to match your Smartproxy account's requirements.
 
     Common Smartproxy formats:
       - "<user>-session-<token>"
       - "customer-<user>-cc-<CC>-session-<token>"
+      - Just the base user (for some plans)
     """
-    parts = [base_user]
-    if SMARTPROXY_CC:
-        parts.append(f"cc-{SMARTPROXY_CC}")
-    if session:
-        parts.append(f"session-{session}")
-    return "-".join(parts)
+    # For Smartproxy, use simple username format that works with requests
+    return base_user
 
 
 def playwright_proxy_config(session: Optional[str]) -> Optional[Dict[str, str]]:
@@ -64,3 +61,38 @@ def playwright_proxy_config(session: Optional[str]) -> Optional[Dict[str, str]]:
         "username": username,
         "password": password,
     }
+
+
+def get_alternative_proxy_configs(session: Optional[str]) -> List[Dict[str, str]]:
+    """
+    Get alternative proxy configurations to try if the primary one fails.
+    Common Smartproxy ports: 7000, 7001, 7002, 3120, 3128
+    """
+    if not has_smartproxy_creds():
+        return []
+    
+    host = str(SMARTPROXY_HOST).strip()
+    if not host:
+        return []
+    
+    # Common ports for Smartproxy
+    alt_ports = ["7000", "7001", "7002", "3120", "3128", "8080"]
+    primary_port = str(SMARTPROXY_PORT).strip()
+    
+    configs = []
+    for port in alt_ports:
+        if port == primary_port:
+            continue  # Skip the primary port we already tried
+            
+        server = f"http://{host}:{port}"
+        username = _compose_username(SMARTPROXY_USER, session)
+        password = SMARTPROXY_PASSWORD
+        
+        configs.append({
+            "server": server,
+            "username": username,
+            "password": password,
+            "port": port
+        })
+    
+    return configs
