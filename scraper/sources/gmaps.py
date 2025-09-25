@@ -346,7 +346,12 @@ class BrowserPool:
         for i in range(self.size):
             tag = f"w{i:03d}"
             proxy_cfg = _proxy_with_session(self.args, tag)
-            browser: Browser = await self.pw.chromium.launch(headless=True, proxy=proxy_cfg)
+            # Stabilize Chromium on Linux/EC2
+            browser: Browser = await self.pw.chromium.launch(
+                headless=True,
+                proxy=proxy_cfg,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
+            )
             ctx: BrowserContext = await browser.new_context(
                 viewport={"width": 1440, "height": 900},
                 device_scale_factor=1.0,
@@ -740,7 +745,7 @@ async def _process_href(ctx: BrowserContext, href: str, delay_min: float, delay_
     try:
         safe_href = _add_locale_qs(href)
         print(f"{ts()} | DEBUG   | [gmaps] open -> {safe_href[:120]}")
-        await page.goto(safe_href, wait_until="domcontentloaded", timeout=30000)
+        await page.goto(safe_href, wait_until="domcontentloaded", timeout=60000)
         await _click_consent_if_present(page)
         await asyncio.sleep(random.uniform(delay_min, delay_max))
 
@@ -784,7 +789,7 @@ async def run_gmaps(args) -> None:
     """
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
-    limit = int(getattr(args, "limit", 0) or 250)  # 0 = all
+    limit = int(getattr(args, "limit", 0) or 50)  # 0 = all // heree
     concurrency = int(getattr(args, "concurrency", 8) or 8)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
@@ -858,7 +863,12 @@ async def run_gmaps(args) -> None:
                         proxy_cfg = working_config
             
             print(f"{ts()} | DEBUG   | [gmaps] launching browser with proxy_cfg={bool(proxy_cfg)}")
-            browser: Browser = await pw.chromium.launch(headless=True, proxy=proxy_cfg)
+            # Stabilize Chromium on Linux/EC2
+            browser: Browser = await pw.chromium.launch(
+                headless=True,
+                proxy=proxy_cfg,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
+            )
             ctx: BrowserContext = await browser.new_context(
                 viewport={"width": 1440, "height": 900},
                 device_scale_factor=1.0,
@@ -915,7 +925,11 @@ async def run_gmaps(args) -> None:
                         print(f"{ts()} | DEBUG   | [gmaps] closed browser")
                     
                     print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
-                    browser = await pw.chromium.launch(headless=True, proxy=None)
+                    browser = await pw.chromium.launch(
+                        headless=True,
+                        proxy=None,
+                        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
+                    )
                     ctx = await browser.new_context(
                         viewport={"width": 1440, "height": 900},
                         device_scale_factor=1.0,
