@@ -739,13 +739,16 @@ async def _extract_details(page: Page, href: str) -> Dict[str, Any]:
         "listing_url": href,
     }
 
+SCREENSHOT_DIR = "screenshots"
+# ensure screenshot folder exists
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 async def _process_href(ctx: BrowserContext, href: str, delay_min: float, delay_max: float) -> Optional[Dict[str, Any]]:
     page = await ctx.new_page()
     try:
         safe_href = _add_locale_qs(href)
         print(f"{ts()} | DEBUG   | [gmaps] open -> {safe_href[:120]}")
-        await page.goto(safe_href, wait_until="domcontentloaded", timeout=0)
+        await page.goto(safe_href, wait_until="domcontentloaded", timeout=60000) # heree
         await _click_consent_if_present(page)
         await asyncio.sleep(random.uniform(delay_min, delay_max))
 
@@ -762,6 +765,13 @@ async def _process_href(ctx: BrowserContext, href: str, delay_min: float, delay_
             now_url = page.url
         except Exception:
             now_url = "n/a"
+        
+        # Save screenshot on error
+        filename = href.replace("https://", "").replace("/", "_")[:100]  # sanitize filename
+        screenshot_path = os.path.join(SCREENSHOT_DIR, f"{filename}.png")
+        with contextlib.suppress(Exception):
+            await page.screenshot(path=screenshot_path, full_page=True)
+            
         print(
             f"{ts()} | ERROR   | [gmaps] detail-fail href={href[:120]} url_now={now_url[:120]} err={type(e).__name__}: {e}")
         return None
