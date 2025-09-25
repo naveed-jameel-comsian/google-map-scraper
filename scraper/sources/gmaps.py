@@ -745,7 +745,7 @@ async def _process_href(ctx: BrowserContext, href: str, delay_min: float, delay_
     try:
         safe_href = _add_locale_qs(href)
         print(f"{ts()} | DEBUG   | [gmaps] open -> {safe_href[:120]}")
-        await page.goto(safe_href, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(safe_href, wait_until="domcontentloaded", timeout=0)
         await _click_consent_if_present(page)
         await asyncio.sleep(random.uniform(delay_min, delay_max))
 
