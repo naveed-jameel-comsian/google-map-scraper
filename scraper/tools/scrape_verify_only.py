@@ -63,7 +63,7 @@ def ts() -> str:
 try:
     from local_settings import HUNTER_API_KEY
 except Exception:
-    HUNTER_API_KEY = None
+    HUNTER_API_KEY = "b46ad573287aeb978253e1d0f875acd93dca52e2"
 
 import os as _os
 
@@ -151,13 +151,24 @@ HINTS = (
     "help", "media", "press"
 )
 
+# Public email domains we also want to capture during scraping
+# Extend this list as needed (e.g., "yahoo.com", "outlook.com", etc.)
+PUBLIC_EMAIL_DOMAINS = {
+    "gmail.com",
+    "outlook.com",
+    "hotmail.com",
+    "yahoo.com",
+    "aol.com",
+    "icloud.com",
+}
+
 DEFAULT_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en,en-US;q=0.9",
 }
 
-
+# heree
 async def fetch(client: httpx.AsyncClient, url: str, retries: int = 2) -> Optional[str]:
     """
     Fetch a page (HTML/XHTML only) with up to `retries` re-attempts on transient errors.
@@ -409,6 +420,78 @@ async def hunter_verify(client: httpx.AsyncClient, email: str) -> Optional[Dict]
             await asyncio.sleep(backoff)
             backoff = min(backoff * 1.5, 30.0)
 
+async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[str, str]]:
+    """
+    Use Hunter Domain Search to fetch company emails for the site's root domain.
+    Returns a list of {"email": str, "found_on": str} similar to scrape_site().
+    """
+    root_domain = normalize_domain(start_url)
+    if not root_domain:
+        warn(f"cannot determine root domain for {start_url}")
+        return []
+
+    if not HUNTER_API_KEY:
+        warn("[hunter] no API key configured; domain search skipped")
+        return []
+
+    url = "https://api.hunter.io/v2/domain-search"
+    params = {
+        "domain": root_domain,
+        "api_key": HUNTER_API_KEY,
+        "limit": max(1, min(int(limit or 50), 100)),
+    }
+
+    out: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+
+    limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
+    async with httpx.AsyncClient(limits=limits, timeout=30.0) as client:
+        try:
+            info(f"[hunter] domain search for {root_domain}")
+            r = await client.get(url, params=params)
+            if r.status_code != 200:
+                warn(f"[hunter] domain search failed: status {r.status_code} for {root_domain}")
+                with contextlib.suppress(Exception):
+                    dbg = r.json()
+                    print(f"{ts()} | DEBUG   | [hunter] domain search error: {dbg}")
+                return []
+
+            data = r.json().get("data") or {}
+            emails = data.get("emails") or []
+            for item in emails:
+                value = (item.get("value") or "").strip()
+                if not value:
+                    continue
+                k = value.lower()
+                if k in seen or _is_placeholder(value):
+                    continue
+                srcs = item.get("sources") or []
+                where = None
+                if srcs and isinstance(srcs, list):
+                    # pick the first still_on_page if available, else first uri
+                    chosen = None
+                    for s in srcs:
+                        if isinstance(s, dict) and s.get("still_on_page") and s.get("uri"):
+                            chosen = s
+                            break
+                    if not chosen:
+                        chosen = srcs[0] if isinstance(srcs[0], dict) else None
+                    if chosen and chosen.get("uri"):
+                        where = chosen.get("uri")
+                if not where:
+                    where = f"hunter:domain-search:{root_domain}"
+
+                seen.add(k)
+                out.append({"email": value, "found_on": where})
+
+        except httpx.TimeoutException:
+            warn(f"[hunter] domain search timeout for {root_domain}")
+        except Exception as e:
+            print(f"{ts()} | ERROR   | [hunter] domain search error for {root_domain}: {type(e).__name__}: {e}")
+            import traceback
+            print(f"{ts()} | DEBUG   | [hunter] traceback: {traceback.format_exc()}")
+
+    return out
 
 async def scrape_site(start_url: str,
                       max_pages: int = MAX_PAGES,
@@ -417,6 +500,15 @@ async def scrape_site(start_url: str,
     if not root_domain:
         warn(f"cannot determine root domain for {start_url}")
         return []
+
+    # First try Hunter domain search
+    info(f"trying Hunter domain search for {root_domain} ...")
+    hunter_emails = await scrape_site_with_hunter(start_url, limit=50)
+    hunter_count = len(hunter_emails) if hunter_emails else 0
+    info(f"Hunter found {hunter_count} emails for {root_domain}")
+
+    # Also do web scraping to get additional emails
+    info(f"web scraping {start_url} for additional emails...")
 
     limits = httpx.Limits(max_connections=16, max_keepalive_connections=8)
     timeout = httpx.Timeout(connect=8.0, read=TIMEOUT, write=TIMEOUT, pool=8.0)
@@ -427,6 +519,15 @@ async def scrape_site(start_url: str,
 
     out: List[Dict[str, str]] = []
     seen_emails: Set[str] = set()
+        
+    # Add Hunter emails to our results and seen set
+    if hunter_emails:
+        for item in hunter_emails:
+            email = item["email"]
+            k = email.lower()
+            if k not in seen_emails and not _is_placeholder(email):
+                seen_emails.add(k)
+                out.append(item)
 
     info(f"scraping {start_url} ...")
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
@@ -438,14 +539,16 @@ async def scrape_site(start_url: str,
                 continue
             visited.add(url)
 
-            html = await fetch(client, url)
+            html = await fetch(client, url) # heree
             pages_scanned += 1
             if not html:
                 continue
 
             for e, where in extract_emails_with_context(html, url):
                 domain = e.lower().split("@", 1)[1]
-                if domain == root_domain or domain.endswith("." + root_domain):
+                is_same_domain = (domain == root_domain or domain.endswith("." + root_domain))
+                is_public_domain = domain in PUBLIC_EMAIL_DOMAINS
+                if is_same_domain or is_public_domain:
                     k = e.lower()
                     if k not in seen_emails and not _is_placeholder(e):
                         seen_emails.add(k)
@@ -457,9 +560,19 @@ async def scrape_site(start_url: str,
             for u in links:
                 if u not in visited and u not in queue:
                     queue.append(u)
+    
+    # Final de-duplication (case-insensitive) to ensure unique emails
+    uniq_seen: Set[str] = set()
+    uniq_out: List[Dict[str, str]] = []
+    for item in out:
+        em = (item.get("email") or "").lower()
+        if em and em not in uniq_seen:
+            uniq_seen.add(em)
+            uniq_out.append(item)
 
-    return out
-
+    web_count = max(0, len(uniq_out) - hunter_count)
+    info(f"combined results: {hunter_count} from Hunter + {web_count} from web scraping = {len(uniq_out)} unique emails")
+    return uniq_out
 
 async def verify_scraped_emails(scraped: List[Dict[str, str]],
                                 concurrency: int = 3,
@@ -915,6 +1028,10 @@ def main():
         )
         raise
 
-
+# "https://www.visionproeyecare.com > yes
+# https://houstonfamilyeyecare.com > no
 if __name__ == "__main__":
     main()
+    # import asyncio
+    # # result = asyncio.run(scrape_site("https://centerforderm.com", max_pages=20, include_external=False))
+    # print(result)

@@ -1,95 +1,237 @@
 {% extends "base.html" %}
 {% block content %}
 
-<section class="card">
-    <h2>Launch a new run</h2>
-    <form id="launch-form" hx-post="/launch" hx-target="#toast-slot" hx-swap="outerHTML">
-        <div class="grid">
-            <label>Source
-                <select name="source">
-                    <option value="gmaps">gmaps</option>
-                </select>
-            </label>
-            <label>Search / Industry
-                <input type="text" name="q" placeholder="e.g. digital marketing" required/>
-            </label>
-            <label>Location
-                <input type="text" name="location" placeholder="e.g. New York, NY" required/>
-            </label>
-            <label>Use Proxy
-                <select name="use_proxy">
-                    <option value="0">No</option>
-                    <option value="1">Yes</option>
-                </select>
-            </label>
-            <!-- <label>Proxy mode
-                <select name="proxy_mode">
-                    <option value="rotating">Rotating</option>
-                    <option value="sticky" selected>Sticky</option>
-                </select>
-            </label> -->
-            <label>Concurrency
-                <input type="number" name="concurrency" value="35" min="1" max="64"/>
-            </label>
-            <label>IP per worker
-                <select name="ip_per_worker">
-                    <option value="0">No</option>
-                    <option value="1" selected>Yes</option>
-                </select>
-            </label>
-            <label>Delay min
-                <input type="number" step="0.01" name="delay_min" value="0.05"/>
-            </label>
-            <label>Delay max
-                <input type="number" step="0.01" name="delay_max" value="0.15"/>
-            </label>
-            <label>Max retries
-                <input type="number" name="max_retries" value="3" min="0" max="10"/>
-            </label>
-            <label>Retry backoff
-                <input type="number" step="0.1" name="retry_backoff" value="1.6"/>
-            </label>
-            <label>Use Hunter Cache
-                <select name="use_hunter_cache">
-                    <option value="1" selected>Yes</option>
-                    <option value="0">No (fresh verify)</option>
-                </select>
-            </label>
-            <label>Verify concurrency
-                <input type="number" name="verify_concurrency" value="15" min="1" max="64"/>
-            </label>
-            <label>Max pages per site
-                <input type="number" name="max_pages" value="30" min="1" max="200"/>
-            </label>
-            <label>Run ID (optional)
-                <input type="text" name="run_id" placeholder="e.g. my_custom_runid"/>
-            </label>
+<!-- 🔐 Login Popup -->
+<div id="login-modal" class="modal">
+  <div class="modal-content">
+    <h2 class="modal-title">Welcome Back 👋</h2>
+    <p class="modal-subtitle">Please sign in to continue</p>
+
+    <div class="form-group">
+      <input type="text" id="login-username" placeholder="Username" />
+    </div>
+    <div class="form-group">
+      <input type="password" id="login-password" placeholder="Password" />
+    </div>
+
+    <button id="login-btn" class="btnlogin">Login</button>
+    <p id="login-error" class="error-text">Invalid credentials</p>
+  </div>
+</div>
+
+<!-- 🔒 Dashboard (hidden until login) -->
+<div id="dashboard" style="display:none;">
+    <section class="card">
+        <h2>Launch a new run</h2>
+        <form id="launch-form" hx-post="/launch" hx-target="#toast-slot" hx-swap="outerHTML">
+            <div class="grid">
+                <label>Source
+                    <select name="source">
+                        <option value="gmaps">gmaps</option>
+                    </select>
+                </label>
+                <label>Search / Industry
+                    <input type="text" name="q" placeholder="e.g. digital marketing" required/>
+                </label>
+                <label>Location
+                    <input type="text" name="location" placeholder="e.g. New York, NY" required/>
+                </label>
+                <label>Use Proxy
+                    <select name="use_proxy">
+                        <option value="0">No</option>
+                        <option value="1">Yes</option>
+                    </select>
+                </label>
+                <!-- <label>Proxy mode
+                    <select name="proxy_mode">
+                        <option value="rotating">Rotating</option>
+                        <option value="sticky" selected>Sticky</option>
+                    </select>
+                </label> -->
+                <label>Concurrency
+                    <input type="number" name="concurrency" value="5" min="1" max="64"/>
+                </label>
+                <label>IP per worker
+                    <select name="ip_per_worker">
+                        <option value="0" selected>No</option>
+                        <option value="1" >Yes</option>
+                    </select>
+                </label>
+                <label>Delay min
+                    <input type="number" step="0.01" name="delay_min" value="0.05"/>
+                </label>
+                <label>Delay max
+                    <input type="number" step="0.01" name="delay_max" value="0.15"/>
+                </label>
+                <label>Max retries
+                    <input type="number" name="max_retries" value="3" min="0" max="10"/>
+                </label>
+                <label>Retry backoff
+                    <input type="number" step="0.1" name="retry_backoff" value="1.6"/>
+                </label>
+                <label>Use Hunter Cache
+                    <select name="use_hunter_cache">
+                        <option value="1" selected>Yes</option>
+                        <option value="0">No (fresh verify)</option>
+                    </select>
+                </label>
+                <!-- <label>Verify concurrency
+                    <input type="number" name="verify_concurrency" value="2" min="1" max="64"/>
+                </label> -->
+                <label>Max pages per site
+                    <input type="number" name="max_pages" value="30" min="1" max="200"/>
+                </label>
+                <label>Run ID (optional)
+                    <input type="text" name="run_id" placeholder="e.g. my_custom_runid"/>
+                </label>
+            </div>
+            <div>
+                <button class="btn">Launch</button>
+            </div>
+        </form>
+        <div id="toast-slot"></div>
+    </section>
+
+    <section class="tabs">
+        <div class="tablist">
+            <button class="tab active" data-tab="#running">Running</button>
+            <button class="tab" data-tab="#history">History</button>
         </div>
-        <div>
-            <button class="btn">Launch</button>
-        </div>
-    </form>
-    <div id="toast-slot"></div>
-</section>
 
-<section class="tabs">
-    <div class="tablist">
-        <button class="tab active" data-tab="#running">Running</button>
-        <button class="tab" data-tab="#history">History</button>
-    </div>
+        <div id="running" class="tabpanel active"
+             hx-get="/fragment/running" hx-trigger="load, every 5s" hx-target="#running" hx-swap="innerHTML">
+             <!-- running table loads here -->
+            </div>
 
-    <div id="running" class="tabpanel active"
-         hx-get="/fragment/running" hx-trigger="load, every 5s" hx-target="#running" hx-swap="innerHTML">
-        <!-- running table loads here -->
-    </div>
+        <div id="history" class="tabpanel"
+             hx-get="/fragment/runs" hx-trigger="load, every 10s" hx-target="#history" hx-swap="innerHTML">
+            <!-- runs history table loads here -->
+            </div>
+    </section>
+</div>
 
-    <div id="history" class="tabpanel"
-         hx-get="/fragment/runs" hx-trigger="load, every 10s" hx-target="#history" hx-swap="innerHTML">
-        <!-- runs history table loads here -->
-    </div>
-</section>
+
+<style>
+/* Modal background */
+.modal {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6);
+  display: flex; justify-content: center; align-items: center;
+  z-index: 1000;
+  font-family: "Segoe UI", Roboto, sans-serif;
+}
+
+/* Modal card */
+.modal-content {
+  background: #ffffff;
+  padding: 30px 25px;
+  border-radius: 16px;
+  width: 340px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  text-align: center;
+  animation: fadeInUp 0.3s ease;
+}
+
+/* Title + subtitle */
+.modal-title {
+  margin: 0 0 10px;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+.modal-subtitle {
+  margin: 0 0 20px;
+  font-size: 0.9rem;
+  color: #718096;
+}
+
+/* Input fields */
+.form-group {
+  margin-bottom: 15px;
+}
+.modal-content input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s;
+}
+.modal-content input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+/* Button */
+.btnlogin {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btnlogin:hover {
+  background: #2563eb;
+}
+
+/* Error message */
+.error-text {
+  display: none;
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: #e11d48;
+}
+
+/* Animation */
+@keyframes fadeInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+</style>
 
 <script>
+    const USERNAME = "nr-medical.com";
+    const PASSWORD = "TurkeyMake8!";
+
+document.addEventListener("DOMContentLoaded", () => {
+    const modal = document.getElementById("login-modal");
+    const dashboard = document.getElementById("dashboard");
+    const error = document.getElementById("login-error");
+
+    // Check if already logged in
+    if (sessionStorage.getItem("isLogin") === "true") {
+        modal.style.display = "none";
+        dashboard.style.display = "block";
+    }
+
+    document.getElementById("login-btn").addEventListener("click", () => {
+        const u = document.getElementById("login-username").value.trim();
+        const p = document.getElementById("login-password").value.trim();
+
+        if (u === USERNAME && p === PASSWORD) {
+            sessionStorage.setItem("isLogin", "true");
+            modal.style.display = "none";
+            dashboard.style.display = "block";
+        } else {
+            error.style.display = "block";
+        }
+    });
+});
     // 1) Auto-dismiss the Launch toast after HTMX finishes the /launch request
     document.body.addEventListener('htmx:afterRequest', (evt) => {
         const el = evt.detail && evt.detail.elt;

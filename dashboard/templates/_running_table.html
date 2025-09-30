@@ -5,7 +5,7 @@
         <th>Query</th>
         <th>Status</th>
         <th>Phase</th>
-        <th>GMAPS</th>
+       
         <th>Counts</th>
         <th>Logs</th>
     </tr>
@@ -20,10 +20,6 @@
         </td>
         <td><span class="badge badge-blue">Running</span></td>
         <td>{{r.phase}}</td>
-        <td>
-            {% set gp = r.gmaps_progress or {} %}
-            <div>Hrefs (accumulated): {{ gp.hrefs_total or (r.queued or 0) }}</div>
-        </td>
         <td>
             <div>Queued: {{ r.queued or 0 }}</div>
             <div>Written: {{ r.written or 0 }}</div>

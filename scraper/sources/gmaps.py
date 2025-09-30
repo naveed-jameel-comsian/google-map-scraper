@@ -131,7 +131,7 @@ async def _test_single_proxy_config(proxy_cfg: Dict[str, Any]) -> Tuple[bool, st
     """
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True, proxy=proxy_cfg)
+            browser = await pw.chromium.launch(headless=False, proxy=proxy_cfg)
             context = await browser.new_context()
             page = await context.new_page()
             
@@ -348,7 +348,7 @@ class BrowserPool:
             proxy_cfg = _proxy_with_session(self.args, tag)
             # Stabilize Chromium on Linux/EC2
             browser: Browser = await self.pw.chromium.launch(
-                headless=True,
+                headless=False,
                 proxy=proxy_cfg,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
             )
@@ -659,6 +659,19 @@ async def _extract_text(page: Page, selector: str, timeout_ms: int = 2000) -> Op
     except Exception:
         return None
     return None
+def _normalize_domain(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    u = url.strip()
+    if not u.startswith(("http://", "https://")):
+        u = "http://" + u
+    try:
+        netloc = urlparse(u).netloc.split("@")[-1].split(":")[0].lower().lstrip(".")
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        return netloc or None
+    except Exception:
+        return None
 
 
 async def _extract_details(page: Page, href: str) -> Dict[str, Any]:
@@ -767,10 +780,10 @@ async def _process_href(ctx: BrowserContext, href: str, delay_min: float, delay_
             now_url = "n/a"
         
         # Save screenshot on error
-        filename = href.replace("https://", "").replace("/", "_")[:100]  # sanitize filename
-        screenshot_path = os.path.join(SCREENSHOT_DIR, f"{filename}.png")
-        with contextlib.suppress(Exception):
-            await page.screenshot(path=screenshot_path, full_page=True)
+        # filename = href.replace("https://", "").replace("/", "_")[:100]  # sanitize filename
+        # screenshot_path = os.path.join(SCREENSHOT_DIR, f"{filename}.png")
+        # with contextlib.suppress(Exception):
+        #     await page.screenshot(path=screenshot_path, full_page=True)
             
         print(
             f"{ts()} | ERROR   | [gmaps] detail-fail href={href[:120]} url_now={now_url[:120]} err={type(e).__name__}: {e}")
@@ -799,11 +812,11 @@ async def run_gmaps(args) -> None:
     """
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
-    limit = int(getattr(args, "limit", 0) or 50)  # 0 = all // heree
-    concurrency = int(getattr(args, "concurrency", 8) or 8)
+    limit = int(getattr(args, "limit", 0) or 0)  # 0 = all // heree
+    concurrency = 1 # int(getattr(args, "concurrency", 8) or 5)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
-    ip_per_worker = int(getattr(args, "ip_per_worker", 0) or 0)
+    ip_per_worker = 0 # int(getattr(args, "ip_per_worker", 0) or 0)
 
     q_full = f"{q} {loc}".strip()
     outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
@@ -875,7 +888,7 @@ async def run_gmaps(args) -> None:
             print(f"{ts()} | DEBUG   | [gmaps] launching browser with proxy_cfg={bool(proxy_cfg)}")
             # Stabilize Chromium on Linux/EC2
             browser: Browser = await pw.chromium.launch(
-                headless=True,
+                headless=False,
                 proxy=proxy_cfg,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
             )
@@ -936,7 +949,7 @@ async def run_gmaps(args) -> None:
                     
                     print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
                     browser = await pw.chromium.launch(
-                        headless=True,
+                        headless=False,
                         proxy=None,
                         args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
                     )
@@ -1004,161 +1017,161 @@ async def run_gmaps(args) -> None:
         hrefs = dedupe_hrefs(hrefs)
 
         # 2) If results are few and limit is high, broaden with query/location variants
-        def _singular_plural_variants(term: str) -> List[str]:
-            t = (term or "").strip()
-            out = {t}
-            if not t:
-                return []
-            if t.endswith("ies"):
-                out.add(t[:-3] + "y")
-            if t.endswith("ses") or t.endswith("xes"):
-                out.add(t[:-2])
-            if t.endswith("s") and len(t) > 3:
-                out.add(t[:-1])
-            else:
-                out.add(t + "s")
-            return [x for x in out if x]
+        # def _singular_plural_variants(term: str) -> List[str]:
+        #     t = (term or "").strip()
+        #     out = {t}
+        #     if not t:
+        #         return []
+        #     if t.endswith("ies"):
+        #         out.add(t[:-3] + "y")
+        #     if t.endswith("ses") or t.endswith("xes"):
+        #         out.add(t[:-2])
+        #     if t.endswith("s") and len(t) > 3:
+        #         out.add(t[:-1])
+        #     else:
+        #         out.add(t + "s")
+        #     return [x for x in out if x]
 
-        def _query_variants(base_q: str) -> List[str]:
-            base_q = (base_q or "").strip()
-            words = base_q.split()
-            variants: List[str] = []
-            # Fetch dynamic related terms via Datamuse (no API key). Best-effort; ignore on error.
-            def _datamuse_terms(term: str) -> List[str]:
-                try:
-                    resp = requests.get(
-                        "https://api.datamuse.com/words",
-                        params={"ml": term, "max": 8},
-                        timeout=5.0,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json() or []
-                        out: List[str] = []
-                        for obj in data:
-                            w = (obj.get("word") or "").strip()
-                            if w and 2 <= len(w) <= 40 and all(c.isalnum() or c.isspace() for c in w):
-                                out.append(w)
-                        return out[:6]
-                except Exception:
-                    pass
-                return []
-            if base_q:
-                variants.append(base_q)
-            if 0 < len(words) <= 2:
-                toggles: List[List[str]] = []
-                for w in words:
-                    toggles.append(_singular_plural_variants(w))
-                for combo in product(*toggles):
-                    variants.append(" ".join(combo))
-            if len(words) == 1:
-                key = words[0].lower().rstrip('s')
-                for syn in _datamuse_terms(key):
-                    variants.append(syn)
-            seen = set()
-            out: List[str] = []
-            for v in variants:
-                v2 = " ".join(v.split())
-                if v2 and v2.lower() not in seen:
-                    out.append(v2)
-                    seen.add(v2.lower())
-            return out[:10]
+        # def _query_variants(base_q: str) -> List[str]:
+        #     base_q = (base_q or "").strip()
+        #     words = base_q.split()
+        #     variants: List[str] = []
+        #     # Fetch dynamic related terms via Datamuse (no API key). Best-effort; ignore on error.
+        #     def _datamuse_terms(term: str) -> List[str]:
+        #         try:
+        #             resp = requests.get(
+        #                 "https://api.datamuse.com/words",
+        #                 params={"ml": term, "max": 8},
+        #                 timeout=5.0,
+        #             )
+        #             if resp.status_code == 200:
+        #                 data = resp.json() or []
+        #                 out: List[str] = []
+        #                 for obj in data:
+        #                     w = (obj.get("word") or "").strip()
+        #                     if w and 2 <= len(w) <= 40 and all(c.isalnum() or c.isspace() for c in w):
+        #                         out.append(w)
+        #                 return out[:6]
+        #         except Exception:
+        #             pass
+        #         return []
+        #     if base_q:
+        #         variants.append(base_q)
+        #     if 0 < len(words) <= 2:
+        #         toggles: List[List[str]] = []
+        #         for w in words:
+        #             toggles.append(_singular_plural_variants(w))
+        #         for combo in product(*toggles):
+        #             variants.append(" ".join(combo))
+        #     if len(words) == 1:
+        #         key = words[0].lower().rstrip('s')
+        #         for syn in _datamuse_terms(key):
+        #             variants.append(syn)
+        #     seen = set()
+        #     out: List[str] = []
+        #     for v in variants:
+        #         v2 = " ".join(v.split())
+        #         if v2 and v2.lower() not in seen:
+        #             out.append(v2)
+        #             seen.add(v2.lower())
+        #     return out[:10]
 
-        def _location_variants(base_loc: str) -> List[str]:
-            base_loc = (base_loc or "").strip()
-            out: List[str] = []
-            # Geocode and nearby cities via Nominatim/Overpass (best-effort)
-            def _geocode(loc_text: str) -> Optional[Tuple[float, float]]:
-                try:
-                    resp = requests.get(
-                        "https://nominatim.openstreetmap.org/search",
-                        params={"q": loc_text, "format": "json", "limit": 1},
-                        headers={"User-Agent": "gmaps-scraper/1.0"},
-                        timeout=7.0,
-                    )
-                    if resp.status_code == 200:
-                        js = resp.json() or []
-                        if js:
-                            return float(js[0]["lat"]), float(js[0]["lon"])
-                except Exception:
-                    return None
-                return None
+        # def _location_variants(base_loc: str) -> List[str]:
+        #     base_loc = (base_loc or "").strip()
+        #     out: List[str] = []
+        #     # Geocode and nearby cities via Nominatim/Overpass (best-effort)
+        #     def _geocode(loc_text: str) -> Optional[Tuple[float, float]]:
+        #         try:
+        #             resp = requests.get(
+        #                 "https://nominatim.openstreetmap.org/search",
+        #                 params={"q": loc_text, "format": "json", "limit": 1},
+        #                 headers={"User-Agent": "gmaps-scraper/1.0"},
+        #                 timeout=7.0,
+        #             )
+        #             if resp.status_code == 200:
+        #                 js = resp.json() or []
+        #                 if js:
+        #                     return float(js[0]["lat"]), float(js[0]["lon"])
+        #         except Exception:
+        #             return None
+        #         return None
 
-            def _nearby_cities(lat: float, lon: float, radius_km: int = 40) -> List[str]:
-                try:
-                    overpass = "https://overpass-api.de/api/interpreter"
-                    q = (
-                        f"[out:json][timeout:15];("
-                        f"node[\"place\"~\"city|town\"](around:{radius_km*1000},{lat},{lon});"
-                        f");out tags 20;"
-                    )
-                    resp = requests.post(overpass, data={"data": q}, timeout=15.0)
-                    if resp.status_code == 200:
-                        js = resp.json() or {}
-                        out: List[str] = []
-                        for el in js.get("elements", []):
-                            name = (el.get("tags", {}).get("name") or "").strip()
-                            if name:
-                                out.append(name)
-                        return out[:8]
-                except Exception:
-                    return []
-                return []
-            if base_loc:
-                out.append(base_loc)
-                out.append(f"near {base_loc}")
-                city_only = base_loc.split(',')[0].strip()
-                if city_only and city_only.lower() != base_loc.lower():
-                    out.append(city_only)
-                    out.append(f"{city_only} area")
-                parts = [p.strip() for p in base_loc.split(',')]
-                if len(parts) >= 2:
-                    state_only = parts[-1]
-                    if state_only:
-                        out.append(state_only)
-                # dynamic nearby cities
-                geo = _geocode(base_loc)
-                if geo:
-                    lat, lon = geo
-                    for city in _nearby_cities(lat, lon):
-                        out.append(city)
-                        out.append(f"near {city}")
-            seen = set()
-            uniq: List[str] = []
-            for v in out:
-                k = v.lower()
-                if k not in seen:
-                    uniq.append(v)
-                    seen.add(k)
-            return uniq[:8]
+        #     def _nearby_cities(lat: float, lon: float, radius_km: int = 40) -> List[str]:
+        #         try:
+        #             overpass = "https://overpass-api.de/api/interpreter"
+        #             q = (
+        #                 f"[out:json][timeout:15];("
+        #                 f"node[\"place\"~\"city|town\"](around:{radius_km*1000},{lat},{lon});"
+        #                 f");out tags 20;"
+        #             )
+        #             resp = requests.post(overpass, data={"data": q}, timeout=15.0)
+        #             if resp.status_code == 200:
+        #                 js = resp.json() or {}
+        #                 out: List[str] = []
+        #                 for el in js.get("elements", []):
+        #                     name = (el.get("tags", {}).get("name") or "").strip()
+        #                     if name:
+        #                         out.append(name)
+        #                 return out[:8]
+        #         except Exception:
+        #             return []
+        #         return []
+        #     if base_loc:
+        #         out.append(base_loc)
+        #         out.append(f"near {base_loc}")
+        #         city_only = base_loc.split(',')[0].strip()
+        #         if city_only and city_only.lower() != base_loc.lower():
+        #             out.append(city_only)
+        #             out.append(f"{city_only} area")
+        #         parts = [p.strip() for p in base_loc.split(',')]
+        #         if len(parts) >= 2:
+        #             state_only = parts[-1]
+        #             if state_only:
+        #                 out.append(state_only)
+        #         # dynamic nearby cities
+        #         geo = _geocode(base_loc)
+        #         if geo:
+        #             lat, lon = geo
+        #             for city in _nearby_cities(lat, lon):
+        #                 out.append(city)
+        #                 out.append(f"near {city}")
+        #     seen = set()
+        #     uniq: List[str] = []
+        #     for v in out:
+        #         k = v.lower()
+        #         if k not in seen:
+        #             uniq.append(v)
+        #             seen.add(k)
+        #     return uniq[:8]
 
-        if (limit == 0 or len(hrefs) < min(limit, 400)):
-            q_variants = _query_variants(q)
-            loc_variants = _location_variants(loc) or [""]
-            for qi, li in product(q_variants, loc_variants):
-                if 0 < limit <= len(hrefs):
-                    break
-                qv = f"{qi} {li}".strip()
-                if qv.lower() == q_full.lower():
-                    continue
-                url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(qv)}")
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                    await _click_consent_if_present(page)
-                except Exception:
-                    continue
-                print(f"{ts()} | DEBUG   | [gmaps] variant query='{qv}'")
-                async def _progress_update_v(payload: Dict[str, int]) -> None:
-                    try:
-                        p2 = dict(payload)
-                        p2["query"] = qv
-                        p2["hrefs_total"] = len(hrefs)
-                        _append_meta(meta_path, gmaps_progress=p2, last_heartbeat=ts())
-                    except Exception:
-                        pass
-                more = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update_v)
-                if more:
-                    hrefs = dedupe_hrefs(list(dict.fromkeys(hrefs + more)))
-                    print(f"{ts()} | INFO    | [gmaps] hrefs.accumulated={len(hrefs)}")
+        # if (limit == 0 or len(hrefs) < min(limit, 400)):
+        #     q_variants = _query_variants(q)
+        #     loc_variants = _location_variants(loc) or [""]
+        #     for qi, li in product(q_variants, loc_variants):
+        #         if 0 < limit <= len(hrefs):
+        #             break
+        #         qv = f"{qi} {li}".strip()
+        #         if qv.lower() == q_full.lower():
+        #             continue
+        #         url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(qv)}")
+        #         try:
+        #             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        #             await _click_consent_if_present(page)
+        #         except Exception:
+        #             continue
+        #         print(f"{ts()} | DEBUG   | [gmaps] variant query='{qv}'")
+        #         async def _progress_update_v(payload: Dict[str, int]) -> None:
+        #             try:
+        #                 p2 = dict(payload)
+        #                 p2["query"] = qv
+        #                 p2["hrefs_total"] = len(hrefs)
+        #                 _append_meta(meta_path, gmaps_progress=p2, last_heartbeat=ts())
+        #             except Exception:
+        #                 pass
+        #         more = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update_v)
+        #         if more:
+        #             hrefs = dedupe_hrefs(list(dict.fromkeys(hrefs + more)))
+        #             print(f"{ts()} | INFO    | [gmaps] hrefs.accumulated={len(hrefs)}")
 
         metrics = Metrics()
         failures = []
@@ -1167,6 +1180,7 @@ async def run_gmaps(args) -> None:
         logger.info("[gmaps] hrefs.collected", count=len(hrefs))
 
         seen: Set[str] = set()
+        seen_domains: Set[str] = set()
         sem = asyncio.Semaphore(concurrency)
         written = 0
         stop_event = asyncio.Event()
@@ -1217,6 +1231,13 @@ async def run_gmaps(args) -> None:
                 "search_location": loc,
                 **data,
             }
+            # Domain-level de-duplication: keep only one record per website domain
+            domain = _normalize_domain(rec.get("website"))
+            if domain:
+                if domain in seen_domains:
+                    print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate: {domain} name={rec.get('name')!r}")
+                    return
+                seen_domains.add(domain)
             to_jsonl(outfile, rec)
             to_jsonl(os.path.join(run_dir, "gmaps.jsonl"), rec)
             written += 1
@@ -1317,6 +1338,13 @@ async def run_gmaps(args) -> None:
                     "search_location": loc,
                     **data,
                 }
+                # Domain-level de-duplication on retries as well
+                domain = _normalize_domain(rec.get("website"))
+                if domain:
+                    if domain in seen_domains:
+                        print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate(retry): {domain} name={rec.get('name')!r}")
+                        return
+                    seen_domains.add(domain)
                 to_jsonl(outfile, rec)
                 to_jsonl(os.path.join(run_dir, "gmaps.jsonl"), rec)
 
