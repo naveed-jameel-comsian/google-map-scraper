@@ -128,6 +128,52 @@ def normalize_domain(url: str) -> Optional[str]:
         return None
 
 
+def normalize_domain_for_hunter(url: str) -> Optional[str]:
+    """
+    Extract base domain for Hunter API queries.
+    Converts subdomains to base domain (e.g., locator.lacounty.gov -> lacounty.gov)
+    """
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    try:
+        netloc = urlparse(url).netloc.split("@")[-1].split(":")[0].lower().lstrip(".")
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        
+        # Extract base domain by taking the last two parts (domain.tld)
+        # This handles cases like locator.lacounty.gov -> lacounty.gov
+        parts = netloc.split(".")
+        if len(parts) >= 2:
+            # For domains with 2+ parts, take the last 2 parts as base domain
+            base_domain = ".".join(parts[-2:])
+            return base_domain
+        else:
+            return netloc or None
+    except Exception:
+        return None
+
+
+def extract_base_url(url: str) -> Optional[str]:
+    """
+    Extract base URL (protocol + domain) from a full URL with path.
+    Example: https://www.thrivepetcare.com/locations/california/woodland-hills -> https://www.thrivepetcare.com
+    """
+    if not url:
+        return None
+    try:
+        if url.startswith(("http://", "https://")):
+            parsed = urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            return base_url
+        else:
+            # If it doesn't start with protocol, assume it's just a domain
+            return url.lower().strip()
+    except Exception:
+        return None
+
+
 def same_domain(url: str, root_domain: str) -> bool:
     try:
         d = normalize_domain(url)
@@ -425,7 +471,7 @@ async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[
     Use Hunter Domain Search to fetch company emails for the site's root domain.
     Returns a list of {"email": str, "found_on": str} similar to scrape_site().
     """
-    root_domain = normalize_domain(start_url)
+    root_domain = normalize_domain_for_hunter(start_url)
     if not root_domain:
         warn(f"cannot determine root domain for {start_url}")
         return []
@@ -699,21 +745,35 @@ def _append_jsonl(path: str, obj: dict) -> None:
 def _emails_jsonl_to_csv(jsonl_path: str, csv_path: str) -> None:
     """
     Flatten verifier results rows into a CSV:
-      name, website, verified_emails (semicolon-joined)
+      name, website, email1, email2, email3, ... (each email in separate column)
     """
     rows = []
+    max_emails = 0
+    
+    # First pass: collect all data and find max number of emails
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             with contextlib.suppress(Exception):
                 obj = json.loads(line)
                 name = obj.get("name") or ""
                 website = obj.get("website") or ""
+                # Extract base URL (protocol + domain) from full URL
+                normalized_website = extract_base_url(website) if website else ""
                 verified = obj.get("verified_emails") or []
-                rows.append({"name": name, "website": website, "verified_emails": ";".join(verified)})
+                
+                row_data = {"name": name, "website": normalized_website}
+                for i, email in enumerate(verified):
+                    row_data[f"email_{i+1}"] = email
+                
+                rows.append(row_data)
+                max_emails = max(max_emails, len(verified))
+    
+    # Create fieldnames: name, website, email_1, email_2, ...
+    fieldnames = ["name", "website"] + [f"email_{i+1}" for i in range(max_emails)]
 
     _ensure_dir(os.path.dirname(csv_path))
     with open(csv_path, "w", newline="", encoding="utf-8") as out:
-        w = csv.DictWriter(out, fieldnames=["name", "website", "verified_emails"])
+        w = csv.DictWriter(out, fieldnames=fieldnames)
         w.writeheader()
         for r in rows:
             w.writerow(r)
