@@ -35,6 +35,12 @@ except Exception:
 
     def new_run_id() -> str:
         return time.strftime("run_%Y%m%d_%H%M%S")
+
+try:
+    from core.mongodb import get_emails_for_domain, store_emails_for_domain, is_domain_cached
+    MONGODB_AVAILABLE = True
+except Exception:
+    MONGODB_AVAILABLE = False
 OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 MAX_PAGES = 20
 TIMEOUT = 15.0
@@ -551,6 +557,22 @@ async def scrape_site(start_url: str,
         warn(f"cannot determine root domain for {start_url}")
         return []
 
+    # First check MongoDB cache
+    if MONGODB_AVAILABLE:
+        try:
+            info(f"checking MongoDB cache for {root_domain} ...")
+            cached_emails = await get_emails_for_domain(root_domain)
+            if cached_emails:
+                info(f"MongoDB cache hit: found {len(cached_emails)} emails for {root_domain}")
+                # Convert cached emails back to the expected format
+                return [{"email": email_doc["email"], "found_on": email_doc.get("found_on", "cached")} 
+                       for email_doc in cached_emails]
+            else:
+                info(f"MongoDB cache miss for {root_domain}, proceeding with scraping...")
+        except Exception as e:
+            warn(f"MongoDB cache check failed for {root_domain}: {e}")
+            info(f"Proceeding with scraping despite MongoDB error...")
+
     # First try Hunter domain search
     info(f"trying Hunter domain search for {root_domain} ...")
     hunter_emails = await scrape_site_with_hunter(start_url, limit=50)
@@ -622,6 +644,20 @@ async def scrape_site(start_url: str,
 
     web_count = max(0, len(uniq_out) - hunter_count)
     info(f"combined results: {hunter_count} from Hunter + {web_count} from web scraping = {len(uniq_out)} unique emails")
+    
+    # Store results in MongoDB cache if available
+    if MONGODB_AVAILABLE and uniq_out:
+        try:
+            info(f"storing {len(uniq_out)} emails in MongoDB cache for {root_domain}...")
+            success = await store_emails_for_domain(root_domain, uniq_out, source="scraper")
+            if success:
+                info(f"successfully cached emails for {root_domain} in MongoDB")
+            else:
+                warn(f"failed to cache emails for {root_domain} in MongoDB")
+        except Exception as e:
+            warn(f"MongoDB cache store failed for {root_domain}: {e}")
+            info(f"Continuing without caching...")
+    
     return uniq_out
 
 async def verify_scraped_emails(scraped: List[Dict[str, str]],
@@ -1094,6 +1130,15 @@ def main():
             files=files
         )
         raise
+    finally:
+        # Close MongoDB connection if available
+        if MONGODB_AVAILABLE:
+            try:
+                from core.mongodb import close_mongodb_connection
+                asyncio.run(close_mongodb_connection())
+                info("MongoDB connection closed")
+            except Exception as e:
+                warn(f"Error closing MongoDB connection: {e}")
 
 # https://pchcinc.org
 # https://www.stevenkamaramd.com

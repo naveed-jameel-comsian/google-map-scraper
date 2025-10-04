@@ -104,6 +104,23 @@ input::placeholder {
     font-size: 12px;
 }
 
+.btn-danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+.btn-danger:disabled {
+    background: #6b7280;
+    border-color: #6b7280;
+    opacity: 0.6;
+}
+
 .tablewrap {
     overflow: auto;
     border-radius: 10px;
@@ -176,6 +193,13 @@ th {
 
 .toast.success {
     border-color: var(--ok);
+    background: rgba(52, 211, 153, 0.1);
+}
+
+.toast.error {
+    border-color: var(--danger);
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
 }
 
 .log-box {

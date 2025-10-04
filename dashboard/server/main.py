@@ -12,6 +12,8 @@ from .utils import read_json_safe, list_run_dirs, count_jsonl_lines, safe_child_
 import os
 import signal
 import shutil
+import psutil
+import glob
 
 app = FastAPI(title="Scraper Dashboard")
 
@@ -97,6 +99,88 @@ def launch(
     </div>
     """
     return HTMLResponse(content=html)
+
+
+@app.delete("/remove/{run_id}")
+def remove_run(run_id: str):
+    """
+    Stop a running process and delete all associated files.
+    """
+    run_dir = RUNS_DIR / run_id
+    if not run_dir.exists():
+        raise HTTPException(status_code=404, detail="run not found")
+    
+    try:
+        # Try to read PID and stop the process
+        pid_file = run_dir / "pid"
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                # Check if process is still running
+                if psutil.pid_exists(pid):
+                    process = psutil.Process(pid)
+                    # Kill the process and its children
+                    for child in process.children(recursive=True):
+                        try:
+                            child.terminate()
+                        except psutil.NoSuchProcess:
+                            pass
+                    try:
+                        process.terminate()
+                        # Wait a bit for graceful termination
+                        process.wait(timeout=5)
+                    except psutil.TimeoutExpired:
+                        # Force kill if it doesn't terminate gracefully
+                        try:
+                            process.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+            except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
+                # PID file exists but process is not running or we can't access it
+                pass
+        
+        # Delete the entire run directory and all its contents
+        shutil.rmtree(run_dir)
+        
+        # Also try to delete any related files in the main out directory
+        out_dir = Path(RUNS_DIR).parent
+        patterns_to_delete = [
+            f"{run_id}.jsonl",
+            f"emails_{run_id}.jsonl", 
+            f"gmaps_{run_id}.log.jsonl",
+            f"emails_gmaps_{run_id}.jsonl",
+            f"{run_id}.log.jsonl"  # Add pattern for .log.jsonl files
+        ]
+        
+        # Delete specific patterns
+        for pattern in patterns_to_delete:
+            file_path = out_dir / pattern
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    print(f"Deleted: {file_path}")
+                except OSError as e:
+                    print(f"Failed to delete {file_path}: {e}")
+        
+        # Also use glob to catch any other files with the run_id in the name
+        glob_patterns = [
+            str(out_dir / f"*{run_id}*.jsonl"),
+            str(out_dir / f"*{run_id}*.log"),
+            str(out_dir / f"*{run_id}*.csv")
+        ]
+        
+        for glob_pattern in glob_patterns:
+            for file_path in glob.glob(glob_pattern):
+                try:
+                    Path(file_path).unlink()
+                    print(f"Deleted (glob): {file_path}")
+                except OSError as e:
+                    print(f"Failed to delete {file_path}: {e}")
+        
+        return {"success": True, "message": f"Run {run_id} stopped and deleted successfully"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing run: {str(e)}")
 
 
 @app.get("/download/{run_id}/{filename}")

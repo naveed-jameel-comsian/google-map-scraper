@@ -8,6 +8,7 @@
         <th style="width: 200px;">Counts</th>
         <th>Downloads</th>
         <th>Logs</th>
+         <th>Actions</th>
     </tr>
     </thead>
     <tbody>
@@ -62,6 +63,13 @@
             {% else %}
             <span class="btn btn-sm disabled" title="log does not exist" aria-disabled="true">View</span>
             {% endif %}
+        </td>
+        <td>
+            <button class="btn btn-sm btn-danger" 
+                    onclick="removeRun('{{ r.run_id }}')" 
+                    title="Stop and delete this run">
+                Remove
+            </button>
         </td>
     </tr>
     {% endfor %}

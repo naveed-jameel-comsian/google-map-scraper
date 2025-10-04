@@ -21,7 +21,10 @@ MarkupSafe==3.0.2
 packaging==25.0
 parsel==1.10.0
 playwright==1.46.0
+psutil==6.1.1
 pydantic==2.11.7
+pymongo==4.9.1
+motor==3.6.0
 pydantic_core==2.33.2
 pyee==11.1.0
 pyspark==3.5.5
