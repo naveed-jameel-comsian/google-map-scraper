@@ -36,22 +36,22 @@
                 <label>Location
                     <input type="text" name="location" placeholder="e.g. New York, NY" required/>
                 </label>
-                <label>Use Proxy
+                <!-- <label>Use Proxy
                     <select name="use_proxy">
                         <option value="0">No</option>
                         <option value="1">Yes</option>
                     </select>
-                </label>
+                </label> -->
                 <!-- <label>Proxy mode
                     <select name="proxy_mode">
                         <option value="rotating">Rotating</option>
                         <option value="sticky" selected>Sticky</option>
                     </select>
                 </label> -->
-                <label>Concurrency
-                    <input type="number" name="concurrency" value="5" min="1" max="64"/>
+                <label>Variants
+                    <input type="number" name="concurrency" value="2" min="1" max="64"/>
                 </label>
-                <label>IP per worker
+                <!-- <label>IP per worker
                     <select name="ip_per_worker">
                         <option value="0" selected>No</option>
                         <option value="1" >Yes</option>
@@ -74,19 +74,19 @@
                         <option value="1" selected>Yes</option>
                         <option value="0">No (fresh verify)</option>
                     </select>
-                </label>
+                </label> -->
                 <!-- <label>Verify concurrency
                     <input type="number" name="verify_concurrency" value="2" min="1" max="64"/>
                 </label> -->
-                <label>Max pages per site
+                <!-- <label>Max pages per site
                     <input type="number" name="max_pages" value="30" min="1" max="200"/>
                 </label>
                 <label>Run ID (optional)
                     <input type="text" name="run_id" placeholder="e.g. my_custom_runid"/>
-                </label>
+                </label> -->
             </div>
             <div>
-                <button class="btn">Launch</button>
+                <button class="btnlogin">Launch</button>
             </div>
         </form>
         <div id="toast-slot"></div>

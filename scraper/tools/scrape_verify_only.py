@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import contextlib
 import csv
+import html
 import json
 import os
 import re
@@ -296,12 +297,15 @@ def _normalize_email_text(e: str) -> str:
     return e
 
 
-def extract_emails_with_context(html: str, page_url: str) -> List[Tuple[str, str]]:
+def extract_emails_with_context(html_content: str, page_url: str) -> List[Tuple[str, str]]:
     out: List[Tuple[str, str]] = []
-    if not html:
+    if not html_content:
         return out
 
-    for m in MAILTO_RE.finditer(html):
+    # Decode HTML entities in the content first
+    decoded_html = html.unescape(html_content)
+
+    for m in MAILTO_RE.finditer(decoded_html):
         for raw in _clean_mailto_target(m.group(1)):
             raw = _normalize_email_text(raw)
             mm = EMAIL_RE.fullmatch(raw)
@@ -309,7 +313,7 @@ def extract_emails_with_context(html: str, page_url: str) -> List[Tuple[str, str
                 continue
             out.append((f"{mm.group(1)}@{mm.group(2)}", page_url))
 
-    for m in EMAIL_RE.finditer(html):
+    for m in EMAIL_RE.finditer(decoded_html):
         out.append((f"{m.group(1)}@{m.group(2)}", page_url))
 
     seen = set()
@@ -893,7 +897,7 @@ async def run_file(infile: str, args, logger, run_emails_path: str, meta_path: s
     if logger:
         logger.info("[emails] infile.loaded", total=total, infile=infile)
 
-    sem = asyncio.Semaphore(args.site_concurrency)
+    sem = asyncio.Semaphore(20)
     verified_total = 0
     processed = 0
 
@@ -922,10 +926,12 @@ async def run_file(infile: str, args, logger, run_emails_path: str, meta_path: s
             else:
                 print("  (none)")
 
-            info("verifying scraped emails (cache + Hunter for misses) ...")
-            verified = await verify_scraped_emails(scraped, concurrency=args.verify_concurrency,
-                                                   use_cache=bool(args.use_hunter_cache))
-            print("\nVerified (Hunter):")
+            # verified = await verify_scraped_emails(scraped, concurrency=args.verify_concurrency,
+            #                                        use_cache=bool(args.use_hunter_cache))
+            info("skipping Hunter verification - using scraped emails directly ...")
+            # Use scraped emails directly without Hunter verification
+            verified = [item['email'] for item in scraped]
+            print("\nScraped emails (no verification):")
             if verified:
                 for e in verified:
                     print(f"  - {e}")
@@ -1018,10 +1024,11 @@ def main():
             )
         csv_export_ok = False
         try:
+            info(f"emails CSV exported started----------------------")
             _emails_jsonl_to_csv(run_emails_path, files["emails_csv"])
             info(f"emails CSV exported → {files['emails_csv']}")
-            nuniq = _export_unique_emails_csv(run_emails_path, files["unique_emails_csv"])
-            info(f"unique emails CSV exported ({nuniq}) → {files['unique_emails_csv']}")
+            # nuniq = _export_unique_emails_csv(run_emails_path, files["unique_emails_csv"])
+            # info(f"unique emails CSV exported ({nuniq}) → {files['unique_emails_csv']}")
             csv_export_ok = True
         except Exception as e:
             warn(f"emails CSV export failed: {e}")
@@ -1088,10 +1095,11 @@ def main():
         )
         raise
 
-# "https://www.visionproeyecare.com > yes
-# https://houstonfamilyeyecare.com > no
+# https://pchcinc.org
+# https://www.stevenkamaramd.com
+# http://www.angelesurgentcare.com
 if __name__ == "__main__":
     main()
     # import asyncio
-    # # result = asyncio.run(scrape_site("https://centerforderm.com", max_pages=20, include_external=False))
+    # result = asyncio.run(scrape_site("http://www.angelesurgentcare.com", max_pages=20, include_external=False))
     # print(result)

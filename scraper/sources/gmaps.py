@@ -348,7 +348,7 @@ class BrowserPool:
             proxy_cfg = _proxy_with_session(self.args, tag)
             # Stabilize Chromium on Linux/EC2
             browser: Browser = await self.pw.chromium.launch(
-                headless=False,
+                headless=True,
                 proxy=proxy_cfg,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
             )
@@ -804,6 +804,145 @@ async def with_sem(sem, coro):
             pass
 
 
+def _singular_plural_variants(term: str) -> List[str]:
+    """Generate singular/plural variants of a term"""
+    t = (term or "").strip()
+    out = {t}
+    if not t:
+        return []
+    if t.endswith("ies"):
+        out.add(t[:-3] + "y")
+    if t.endswith("ses") or t.endswith("xes"):
+        out.add(t[:-2])
+    if t.endswith("s") and len(t) > 3:
+        out.add(t[:-1])
+    else:
+        out.add(t + "s")
+    return [x for x in out if x]
+
+
+def _query_variants(base_q: str) -> List[str]:
+    """Generate query variants including synonyms and plural/singular forms"""
+    base_q = (base_q or "").strip()
+    words = base_q.split()
+    variants: List[str] = []
+    
+    # Fetch dynamic related terms via Datamuse (no API key). Best-effort; ignore on error.
+    def _datamuse_terms(term: str) -> List[str]:
+        try:
+            resp = requests.get(
+                "https://api.datamuse.com/words",
+                params={"ml": term, "max": 8},
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json() or []
+                out: List[str] = []
+                for obj in data:
+                    w = (obj.get("word") or "").strip()
+                    if w and 2 <= len(w) <= 40 and all(c.isalnum() or c.isspace() for c in w):
+                        out.append(w)
+                return out[:6]
+        except Exception:
+            pass
+        return []
+    
+    if base_q:
+        variants.append(base_q)
+    if 0 < len(words) <= 2:
+        toggles: List[List[str]] = []
+        for w in words:
+            toggles.append(_singular_plural_variants(w))
+        for combo in product(*toggles):
+            variants.append(" ".join(combo))
+    if len(words) == 1:
+        key = words[0].lower().rstrip('s')
+        for syn in _datamuse_terms(key):
+            variants.append(syn)
+    
+    seen = set()
+    out: List[str] = []
+    for v in variants:
+        v2 = " ".join(v.split())
+        if v2 and v2.lower() not in seen:
+            out.append(v2)
+            seen.add(v2.lower())
+    return out[:10]
+
+
+def _location_variants(base_loc: str) -> List[str]:
+    """Generate location variants including nearby cities"""
+    base_loc = (base_loc or "").strip()
+    out: List[str] = []
+    
+    # Geocode and nearby cities via Nominatim/Overpass (best-effort)
+    def _geocode(loc_text: str) -> Optional[Tuple[float, float]]:
+        try:
+            resp = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": loc_text, "format": "json", "limit": 1},
+                headers={"User-Agent": "gmaps-scraper/1.0"},
+                timeout=7.0,
+            )
+            if resp.status_code == 200:
+                js = resp.json() or []
+                if js:
+                    return float(js[0]["lat"]), float(js[0]["lon"])
+        except Exception:
+            return None
+        return None
+
+    def _nearby_cities(lat: float, lon: float, radius_km: int = 40) -> List[str]:
+        try:
+            overpass = "https://overpass-api.de/api/interpreter"
+            q = (
+                f"[out:json][timeout:15];("
+                f"node[\"place\"~\"city|town\"](around:{radius_km*1000},{lat},{lon});"
+                f");out tags 20;"
+            )
+            resp = requests.post(overpass, data={"data": q}, timeout=15.0)
+            if resp.status_code == 200:
+                js = resp.json() or {}
+                out: List[str] = []
+                for el in js.get("elements", []):
+                    name = (el.get("tags", {}).get("name") or "").strip()
+                    if name:
+                        out.append(name)
+                return out[:8]
+        except Exception:
+            return []
+        return []
+    
+    if base_loc:
+        out.append(base_loc)
+        out.append(f"near {base_loc}")
+        city_only = base_loc.split(',')[0].strip()
+        if city_only and city_only.lower() != base_loc.lower():
+            out.append(city_only)
+            out.append(f"{city_only} area")
+        parts = [p.strip() for p in base_loc.split(',')]
+        if len(parts) >= 2:
+            state_only = parts[-1]
+            if state_only:
+                out.append(state_only)
+        # dynamic nearby cities
+        geo = _geocode(base_loc)
+        if geo:
+            lat, lon = geo
+            for city in _nearby_cities(lat, lon):
+                out.append(city)
+                out.append(f"near {city}")
+    
+    seen = set()
+    uniq: List[str] = []
+    for v in out:
+        k = v.lower()
+        if k not in seen:
+            uniq.append(v)
+            seen.add(k)
+    return uniq[:8]
+
+
 async def run_gmaps(args) -> None:
     """
     Args expected (matching your CLI):
@@ -813,10 +952,11 @@ async def run_gmaps(args) -> None:
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
     limit = int(getattr(args, "limit", 0) or 0)  # 0 = all // heree
-    concurrency = 1 # int(getattr(args, "concurrency", 8) or 5)
+    concurrency = int(getattr(args, "concurrency", 5) or 5)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
-    ip_per_worker = 0 # int(getattr(args, "ip_per_worker", 0) or 0)
+    ip_per_worker = 1 # int(getattr(args, "ip_per_worker", 1) or 1)
+    # use_proxy = int(getattr(args, "use_proxy", 0) or 0)
 
     q_full = f"{q} {loc}".strip()
     outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
@@ -830,7 +970,7 @@ async def run_gmaps(args) -> None:
     print(f"[DEBUG] gmaps dashboard.log path = {os.path.abspath(os.path.join(run_dir, 'dashboard.log'))}")
     print(f"[DEBUG] gmaps outfile = {os.path.abspath(outfile)}")
 
-    outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
+    outfile = os.path.join(OUT_ROOT, f"{run_id}.jsonl")
 
     started_ts = ts()
     _write_meta(meta_path,
@@ -863,7 +1003,7 @@ async def run_gmaps(args) -> None:
 
     start_url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(q_full)}")
 
-    async with async_playwright() as pw:
+    async with async_playwright() as pw: # heree
         if ip_per_worker:
             print(f"{ts()} | DEBUG   | [gmaps] using ip_per_worker mode with {concurrency} workers")
             pool = BrowserPool(pw, args, concurrency)
@@ -888,7 +1028,7 @@ async def run_gmaps(args) -> None:
             print(f"{ts()} | DEBUG   | [gmaps] launching browser with proxy_cfg={bool(proxy_cfg)}")
             # Stabilize Chromium on Linux/EC2
             browser: Browser = await pw.chromium.launch(
-                headless=False,
+                headless=True,
                 proxy=proxy_cfg,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
             )
@@ -905,104 +1045,104 @@ async def run_gmaps(args) -> None:
             ctx.set_default_navigation_timeout(15000)
             page: Page = await ctx.new_page()
 
-        try:
-            await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-            await _click_consent_if_present(page)
-        except Exception:
-            pass
+        # try:
+        #     await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+        #     await _click_consent_if_present(page)
+        # except Exception:
+        #     pass
 
-        # Detect navigation failures early (commonly due to proxy misconfiguration)
-        try:
-            current_url = page.url
-            print(f"{ts()} | DEBUG   | [gmaps] initial page load - url={current_url}")
-        except Exception as e:
-            current_url = ""
-            print(f"{ts()} | ERROR   | [gmaps] failed to get page url: {e}")
+        # # Detect navigation failures early (commonly due to proxy misconfiguration)
+        # try:
+        #     current_url = page.url
+        #     print(f"{ts()} | DEBUG   | [gmaps] initial page load - url={current_url}")
+        # except Exception as e:
+        #     current_url = ""
+        #     print(f"{ts()} | ERROR   | [gmaps] failed to get page url: {e}")
         
-        if not current_url or current_url.startswith("chrome-error://"):
-            print(f"{ts()} | ERROR   | [gmaps] navigation failed url={current_url or '(empty)'}")
-            print(f"{ts()} | DEBUG   | [gmaps] start_url was: {start_url}")
-            print(f"{ts()} | DEBUG   | [gmaps] proxy was enabled: {getattr(args, 'use_proxy', 0)}")
-            print(f"{ts()} | DEBUG   | [gmaps] ip_per_worker mode: {ip_per_worker}")
+        # if not current_url or current_url.startswith("chrome-error://"):
+        #     print(f"{ts()} | ERROR   | [gmaps] navigation failed url={current_url or '(empty)'}")
+        #     print(f"{ts()} | DEBUG   | [gmaps] start_url was: {start_url}")
+        #     print(f"{ts()} | DEBUG   | [gmaps] proxy was enabled: {getattr(args, 'use_proxy', 0)}")
+        #     print(f"{ts()} | DEBUG   | [gmaps] ip_per_worker mode: {ip_per_worker}")
             
             # Log detailed error info
-            try:
-                page_content = await page.content()
-                print(f"{ts()} | DEBUG   | [gmaps] page content length: {len(page_content)}")
-                if "chrome-error" in page_content:
-                    print(f"{ts()} | ERROR   | [gmaps] chrome-error page detected")
-                if "blocked" in page_content.lower() or "access denied" in page_content.lower():
-                    print(f"{ts()} | ERROR   | [gmaps] access blocked page detected")
-            except Exception as e:
-                print(f"{ts()} | DEBUG   | [gmaps] could not get page content: {e}")
+            # try:
+            #     page_content = await page.content()
+            #     print(f"{ts()} | DEBUG   | [gmaps] page content length: {len(page_content)}")
+            #     if "chrome-error" in page_content:
+            #         print(f"{ts()} | ERROR   | [gmaps] chrome-error page detected")
+            #     if "blocked" in page_content.lower() or "access denied" in page_content.lower():
+            #         print(f"{ts()} | ERROR   | [gmaps] access blocked page detected")
+            # except Exception as e:
+            #     print(f"{ts()} | DEBUG   | [gmaps] could not get page content: {e}")
             
-            # Retry once without proxy if a proxy was requested and we're not in ip_per_worker mode
-            if not ip_per_worker and getattr(args, "use_proxy", 0):
-                print(f"{ts()} | INFO    | [gmaps] retrying without proxy due to navigation failure ...")
-                try:
-                    with contextlib.suppress(Exception):
-                        await ctx.close()
-                        print(f"{ts()} | DEBUG   | [gmaps] closed browser context")
-                    with contextlib.suppress(Exception):
-                        await browser.close()
-                        print(f"{ts()} | DEBUG   | [gmaps] closed browser")
+            # # Retry once without proxy if a proxy was requested and we're not in ip_per_worker mode
+            # if not ip_per_worker and getattr(args, "use_proxy", 0):
+            #     print(f"{ts()} | INFO    | [gmaps] retrying without proxy due to navigation failure ...")
+            #     try:
+            #         with contextlib.suppress(Exception):
+            #             await ctx.close()
+            #             print(f"{ts()} | DEBUG   | [gmaps] closed browser context")
+            #         with contextlib.suppress(Exception):
+            #             await browser.close()
+            #             print(f"{ts()} | DEBUG   | [gmaps] closed browser")
                     
-                    print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
-                    browser = await pw.chromium.launch(
-                        headless=False,
-                        proxy=None,
-                        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
-                    )
-                    ctx = await browser.new_context(
-                        viewport={"width": 1440, "height": 900},
-                        device_scale_factor=1.0,
-                        locale="en-US",
-                        extra_http_headers={
-                            "Accept-Language": "en-US,en;q=0.9",
-                            "User-Agent": GMAPS_DEFAULT_HEADERS["User-Agent"],
-                        },
-                    )
-                    ctx.set_default_timeout(8000)
-                    ctx.set_default_navigation_timeout(15000)
-                    page = await ctx.new_page()
-                    print(f"{ts()} | DEBUG   | [gmaps] retrying navigation to {start_url}")
+            #         print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
+            #         browser = await pw.chromium.launch(
+            #             headless=False,
+            #             proxy=None,
+            #             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
+            #         )
+            #         ctx = await browser.new_context(
+            #             viewport={"width": 1440, "height": 900},
+            #             device_scale_factor=1.0,
+            #             locale="en-US",
+            #             extra_http_headers={
+            #                 "Accept-Language": "en-US,en;q=0.9",
+            #                 "User-Agent": GMAPS_DEFAULT_HEADERS["User-Agent"],
+            #             },
+            #         )
+            #         ctx.set_default_timeout(8000)
+            #         ctx.set_default_navigation_timeout(15000)
+            #         page = await ctx.new_page()
+            #         print(f"{ts()} | DEBUG   | [gmaps] retrying navigation to {start_url}")
                     
-                    try:
-                        await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-                        await _click_consent_if_present(page)
-                        current_url = page.url
-                        print(f"{ts()} | DEBUG   | [gmaps] retry successful - url={current_url}")
-                    except Exception as e:
-                        current_url = ""
-                        print(f"{ts()} | ERROR   | [gmaps] retry navigation failed: {e}")
-                        import traceback
-                        print(f"{ts()} | DEBUG   | [gmaps] retry traceback: {traceback.format_exc()}")
-                except Exception as e:
-                    print(f"{ts()} | ERROR   | [gmaps] browser retry setup failed: {e}")
-                    import traceback
-                    print(f"{ts()} | DEBUG   | [gmaps] browser retry traceback: {traceback.format_exc()}")
+            #         try:
+            #             await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+            #             await _click_consent_if_present(page)
+            #             current_url = page.url
+            #             print(f"{ts()} | DEBUG   | [gmaps] retry successful - url={current_url}")
+            #         except Exception as e:
+            #             current_url = ""
+            #             print(f"{ts()} | ERROR   | [gmaps] retry navigation failed: {e}")
+            #             import traceback
+            #             print(f"{ts()} | DEBUG   | [gmaps] retry traceback: {traceback.format_exc()}")
+            #     except Exception as e:
+            #         print(f"{ts()} | ERROR   | [gmaps] browser retry setup failed: {e}")
+            #         import traceback
+            #         print(f"{ts()} | DEBUG   | [gmaps] browser retry traceback: {traceback.format_exc()}")
             
-            if not current_url or current_url.startswith("chrome-error://"):
-                print(f"{ts()} | ERROR   | [gmaps] still cannot load Google Maps. Check proxy creds or run with --use_proxy 0")
-                print(f"{ts()} | DEBUG   | [gmaps] final current_url: {current_url}")
-                logger.error("[gmaps] startup.navigation_failed", start_url=start_url, final_url=current_url)
-                logger.close()
-                # Mark run as failed and exit early
-                _append_meta(meta_path,
-                             status="done",
-                             phase="maps_scraping_failed",
-                             counters={"queued": 0, "written": 0, "failures": 0},
-                             error=f"navigation_failed: {current_url}")
-                if ip_per_worker:
-                    await pool.close()
-                else:
-                    with contextlib.suppress(Exception):
-                        await ctx.close()
-                    with contextlib.suppress(Exception):
-                        await browser.close()
-                return
+            # if not current_url or current_url.startswith("chrome-error://"):
+            #     print(f"{ts()} | ERROR   | [gmaps] still cannot load Google Maps. Check proxy creds or run with --use_proxy 0")
+            #     print(f"{ts()} | DEBUG   | [gmaps] final current_url: {current_url}")
+            #     logger.error("[gmaps] startup.navigation_failed", start_url=start_url, final_url=current_url)
+            #     logger.close()
+            #     # Mark run as failed and exit early
+            #     _append_meta(meta_path,
+            #                  status="done",
+            #                  phase="maps_scraping_failed",
+            #                  counters={"queued": 0, "written": 0, "failures": 0},
+            #                  error=f"navigation_failed: {current_url}")
+            #     if ip_per_worker:
+            #         await pool.close()
+            #     else:
+            #         with contextlib.suppress(Exception):
+            #             await ctx.close()
+            #         with contextlib.suppress(Exception):
+            #             await browser.close()
+            #     return
 
-        # 1) Collect hrefs for the main query with progress updates to meta
+        # 1) Collect hrefs for the main query and variants in parallel
         async def _progress_update(payload: Dict[str, int]) -> None:
             try:
                 # Enrich with active query and cumulative hrefs
@@ -1013,165 +1153,132 @@ async def run_gmaps(args) -> None:
             except Exception:
                 pass
 
-        hrefs = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update)
-        hrefs = dedupe_hrefs(hrefs)
+        # Run main query and variants in parallel
+        print(f"{ts()} | INFO    | [gmaps] starting main query and variants in parallel...")
+        
+        async def _run_main_query() -> List[str]:
+            """Run the main query"""
+            try:
+                await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+                await _click_consent_if_present(page)
+                main_hrefs = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update)
+                print(f"{ts()} | INFO    | [gmaps] main query found {len(main_hrefs)} hrefs")
+                return main_hrefs or []
+            except Exception as e:
+                print(f"{ts()} | WARN    | [gmaps] main query failed: {e}")
+                return []
 
-        # 2) If results are few and limit is high, broaden with query/location variants
-        # def _singular_plural_variants(term: str) -> List[str]:
-        #     t = (term or "").strip()
-        #     out = {t}
-        #     if not t:
-        #         return []
-        #     if t.endswith("ies"):
-        #         out.add(t[:-3] + "y")
-        #     if t.endswith("ses") or t.endswith("xes"):
-        #         out.add(t[:-2])
-        #     if t.endswith("s") and len(t) > 3:
-        #         out.add(t[:-1])
-        #     else:
-        #         out.add(t + "s")
-        #     return [x for x in out if x]
+        async def _run_variants_parallel() -> List[str]:
+            """Run all variants in parallel"""
+            try:
+                # Generate all variants
+                q_variants = _query_variants(q)
+                loc_variants = _location_variants(loc) or [""]
+                
+                # Create all variant combinations (limited to concurrency-1 since main query counts as 1)
+                variant_queries = []
+                max_variants = max(0, concurrency - 1)  # Reserve 1 slot for main query
+                for qi, li in product(q_variants, loc_variants):
+                    qv = f"{qi} {li}".strip()
+                    if qv.lower() != q_full.lower():  # Skip the original query
+                        variant_queries.append(qv)
+                        if len(variant_queries) >= max_variants:  # Limit to concurrency-1 variants
+                            break
+                    if len(variant_queries) >= max_variants:  # Break outer loop too
+                        break
+                
+                print(f"{ts()} | INFO    | [gmaps] generated {len(variant_queries)} variant queries (max {max_variants}, total slots: {concurrency})")
+                
+                if not variant_queries:
+                    return []
+                
+                # Create semaphore for concurrency control (total concurrency including main query)
+                semaphore = asyncio.Semaphore(concurrency)  # Total concurrency: main query + variants
+                
+                async def _execute_variant(variant_query: str) -> List[str]:
+                    """Execute a single variant query and return hrefs found"""
+                    async with semaphore:
+                        try:
+                            # Create new page for this variant to avoid conflicts
+                            if ip_per_worker:
+                                # Use BrowserPool for variants when ip_per_worker is enabled
+                                variant_ctx = pool.pick()
+                                variant_page = await variant_ctx.new_page()
+                            else:
+                                # Use regular context for variants
+                                variant_page = await ctx.new_page()
+                            
+                            url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(variant_query)}")
+                            print(f"{ts()} | DEBUG   | [gmaps] variant query='{variant_query}'")
+                            
+                            # Navigate to variant URL
+                            await variant_page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                            await _click_consent_if_present(variant_page)
+                            
+                            # Progress callback for this variant
+                            async def _progress_update_v(payload: Dict[str, int]) -> None:
+                                try:
+                                    p2 = dict(payload)
+                                    p2["query"] = variant_query
+                                    _append_meta(meta_path, gmaps_progress=p2, last_heartbeat=ts())
+                                except Exception:
+                                    pass
+                            
+                            # Collect hrefs for this variant
+                            variant_hrefs = await _collect_anchor_hrefs(variant_page, limit, dmin, dmax, progress_cb=_progress_update_v)
+                            
+                            print(f"{ts()} | DEBUG   | [gmaps] variant '{variant_query}' found {len(variant_hrefs)} hrefs")
+                            
+                            # Close the variant page
+                            await variant_page.close()
+                            return variant_hrefs or []
+                            
+                        except Exception as e:
+                            print(f"{ts()} | WARN    | [gmaps] variant '{variant_query}' failed: {e}")
+                            try:
+                                await variant_page.close()
+                            except:
+                                pass
+                            return []
+                
+                # Execute all variants in parallel
+                print(f"{ts()} | INFO    | [gmaps] executing {len(variant_queries)} variants in parallel...")
+                variant_results = await asyncio.gather(*[_execute_variant(vq) for vq in variant_queries], return_exceptions=True)
+                
+                # Collect all results
+                all_variant_hrefs = []
+                for result in variant_results:
+                    if isinstance(result, list):
+                        all_variant_hrefs.extend(result)
+                    elif isinstance(result, Exception):
+                        print(f"{ts()} | WARN    | [gmaps] variant execution exception: {result}")
+                
+                print(f"{ts()} | INFO    | [gmaps] variants complete: found {len(all_variant_hrefs)} total hrefs")
+                return all_variant_hrefs
+                
+            except Exception as e:
+                print(f"{ts()} | ERROR   | [gmaps] variants execution failed: {e}")
+                return []
 
-        # def _query_variants(base_q: str) -> List[str]:
-        #     base_q = (base_q or "").strip()
-        #     words = base_q.split()
-        #     variants: List[str] = []
-        #     # Fetch dynamic related terms via Datamuse (no API key). Best-effort; ignore on error.
-        #     def _datamuse_terms(term: str) -> List[str]:
-        #         try:
-        #             resp = requests.get(
-        #                 "https://api.datamuse.com/words",
-        #                 params={"ml": term, "max": 8},
-        #                 timeout=5.0,
-        #             )
-        #             if resp.status_code == 200:
-        #                 data = resp.json() or []
-        #                 out: List[str] = []
-        #                 for obj in data:
-        #                     w = (obj.get("word") or "").strip()
-        #                     if w and 2 <= len(w) <= 40 and all(c.isalnum() or c.isspace() for c in w):
-        #                         out.append(w)
-        #                 return out[:6]
-        #         except Exception:
-        #             pass
-        #         return []
-        #     if base_q:
-        #         variants.append(base_q)
-        #     if 0 < len(words) <= 2:
-        #         toggles: List[List[str]] = []
-        #         for w in words:
-        #             toggles.append(_singular_plural_variants(w))
-        #         for combo in product(*toggles):
-        #             variants.append(" ".join(combo))
-        #     if len(words) == 1:
-        #         key = words[0].lower().rstrip('s')
-        #         for syn in _datamuse_terms(key):
-        #             variants.append(syn)
-        #     seen = set()
-        #     out: List[str] = []
-        #     for v in variants:
-        #         v2 = " ".join(v.split())
-        #         if v2 and v2.lower() not in seen:
-        #             out.append(v2)
-        #             seen.add(v2.lower())
-        #     return out[:10]
-
-        # def _location_variants(base_loc: str) -> List[str]:
-        #     base_loc = (base_loc or "").strip()
-        #     out: List[str] = []
-        #     # Geocode and nearby cities via Nominatim/Overpass (best-effort)
-        #     def _geocode(loc_text: str) -> Optional[Tuple[float, float]]:
-        #         try:
-        #             resp = requests.get(
-        #                 "https://nominatim.openstreetmap.org/search",
-        #                 params={"q": loc_text, "format": "json", "limit": 1},
-        #                 headers={"User-Agent": "gmaps-scraper/1.0"},
-        #                 timeout=7.0,
-        #             )
-        #             if resp.status_code == 200:
-        #                 js = resp.json() or []
-        #                 if js:
-        #                     return float(js[0]["lat"]), float(js[0]["lon"])
-        #         except Exception:
-        #             return None
-        #         return None
-
-        #     def _nearby_cities(lat: float, lon: float, radius_km: int = 40) -> List[str]:
-        #         try:
-        #             overpass = "https://overpass-api.de/api/interpreter"
-        #             q = (
-        #                 f"[out:json][timeout:15];("
-        #                 f"node[\"place\"~\"city|town\"](around:{radius_km*1000},{lat},{lon});"
-        #                 f");out tags 20;"
-        #             )
-        #             resp = requests.post(overpass, data={"data": q}, timeout=15.0)
-        #             if resp.status_code == 200:
-        #                 js = resp.json() or {}
-        #                 out: List[str] = []
-        #                 for el in js.get("elements", []):
-        #                     name = (el.get("tags", {}).get("name") or "").strip()
-        #                     if name:
-        #                         out.append(name)
-        #                 return out[:8]
-        #         except Exception:
-        #             return []
-        #         return []
-        #     if base_loc:
-        #         out.append(base_loc)
-        #         out.append(f"near {base_loc}")
-        #         city_only = base_loc.split(',')[0].strip()
-        #         if city_only and city_only.lower() != base_loc.lower():
-        #             out.append(city_only)
-        #             out.append(f"{city_only} area")
-        #         parts = [p.strip() for p in base_loc.split(',')]
-        #         if len(parts) >= 2:
-        #             state_only = parts[-1]
-        #             if state_only:
-        #                 out.append(state_only)
-        #         # dynamic nearby cities
-        #         geo = _geocode(base_loc)
-        #         if geo:
-        #             lat, lon = geo
-        #             for city in _nearby_cities(lat, lon):
-        #                 out.append(city)
-        #                 out.append(f"near {city}")
-        #     seen = set()
-        #     uniq: List[str] = []
-        #     for v in out:
-        #         k = v.lower()
-        #         if k not in seen:
-        #             uniq.append(v)
-        #             seen.add(k)
-        #     return uniq[:8]
-
-        # if (limit == 0 or len(hrefs) < min(limit, 400)):
-        #     q_variants = _query_variants(q)
-        #     loc_variants = _location_variants(loc) or [""]
-        #     for qi, li in product(q_variants, loc_variants):
-        #         if 0 < limit <= len(hrefs):
-        #             break
-        #         qv = f"{qi} {li}".strip()
-        #         if qv.lower() == q_full.lower():
-        #             continue
-        #         url = _add_locale_qs(f"https://www.google.com/maps/search/{quote_plus(qv)}")
-        #         try:
-        #             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-        #             await _click_consent_if_present(page)
-        #         except Exception:
-        #             continue
-        #         print(f"{ts()} | DEBUG   | [gmaps] variant query='{qv}'")
-        #         async def _progress_update_v(payload: Dict[str, int]) -> None:
-        #             try:
-        #                 p2 = dict(payload)
-        #                 p2["query"] = qv
-        #                 p2["hrefs_total"] = len(hrefs)
-        #                 _append_meta(meta_path, gmaps_progress=p2, last_heartbeat=ts())
-        #             except Exception:
-        #                 pass
-        #         more = await _collect_anchor_hrefs(page, limit, dmin, dmax, progress_cb=_progress_update_v)
-        #         if more:
-        #             hrefs = dedupe_hrefs(list(dict.fromkeys(hrefs + more)))
-        #             print(f"{ts()} | INFO    | [gmaps] hrefs.accumulated={len(hrefs)}")
+        # Execute main query and variants in parallel
+        main_task = asyncio.create_task(_run_main_query())
+        variants_task = asyncio.create_task(_run_variants_parallel())
+        
+        # Wait for both to complete
+        main_hrefs, variant_hrefs = await asyncio.gather(main_task, variants_task, return_exceptions=True)
+        
+        # Handle exceptions
+        if isinstance(main_hrefs, Exception):
+            print(f"{ts()} | ERROR   | [gmaps] main query exception: {main_hrefs}")
+            main_hrefs = []
+        if isinstance(variant_hrefs, Exception):
+            print(f"{ts()} | ERROR   | [gmaps] variants exception: {variant_hrefs}")
+            variant_hrefs = []
+        
+        # Combine and deduplicate all results
+        all_hrefs = (main_hrefs or []) + (variant_hrefs or [])
+        hrefs = dedupe_hrefs(all_hrefs) 
+        print(f"{ts()} | INFO    | [gmaps] combined results after deduplicate : {len(hrefs)} total hrefs (main: {len(main_hrefs or [])}, variants: {len(variant_hrefs or [])})")
 
         metrics = Metrics()
         failures = []
@@ -1204,7 +1311,7 @@ async def run_gmaps(args) -> None:
             except Exception as e:
                 return None, f"{type(e).__name__}:{e}"
 
-        async def worker(h: str) -> None:
+        async def worker(h: str) -> None: # heree
             nonlocal written
             if stop_event.is_set() or h in seen:
                 return

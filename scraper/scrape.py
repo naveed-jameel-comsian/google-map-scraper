@@ -48,7 +48,7 @@ def main():
     print(f"[PATH] OUT_ROOT={OUT_ROOT} (abs={os.path.abspath(OUT_ROOT)})", flush=True)
 
     if not args.outfile:
-        args.outfile = os.path.join(OUT_ROOT, f"{args.source}_{safe_q}_{safe_loc_norm}.jsonl")
+        args.outfile = os.path.join(OUT_ROOT, f"{args.run_id}.jsonl")
     args.outfile = os.path.abspath(args.outfile)
     print(f"[PATH] gmaps.jsonl.target={args.outfile}", flush=True)
 
@@ -63,7 +63,7 @@ def main():
     )
     print(f"[PATH] verify_script={verify_script}", flush=True)
 
-    gmaps_jsonl_for_verifier = os.path.join(OUT_ROOT, f"gmaps_{safe_q}_{safe_loc_norm}.jsonl")
+    gmaps_jsonl_for_verifier = os.path.join(OUT_ROOT, f"{args.run_id}.jsonl")
     gmaps_jsonl_for_verifier_abs = os.path.abspath(gmaps_jsonl_for_verifier)
     print(f"[PATH] verifier.infile.expected={gmaps_jsonl_for_verifier_abs}", flush=True)
 
@@ -71,7 +71,7 @@ def main():
         print(f"[ERROR] Expected infile for verifier not found: {gmaps_jsonl_for_verifier_abs}", flush=True)
         raise SystemExit(1)
 
-    verify_outfile = os.path.join(OUT_ROOT, f"emails_{safe_q}_{safe_loc_norm}.jsonl")
+    verify_outfile = os.path.join(OUT_ROOT, f"emails_{args.run_id}.jsonl")
     verify_outfile_abs = os.path.abspath(verify_outfile)
     os.makedirs(os.path.dirname(verify_outfile_abs), exist_ok=True)
     print(f"[PATH] verifier.outfile.target={verify_outfile_abs}", flush=True)
