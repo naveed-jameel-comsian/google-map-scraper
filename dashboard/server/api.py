@@ -3,8 +3,11 @@ import os
 import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
+import csv
+import io
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from dashboard.server.settings import RUNS_DIR
@@ -145,3 +148,152 @@ def list_runs():
         reverse=True
     )
     return runs
+
+
+# Query Records Models and Endpoints
+
+class QueryRecord(BaseModel):
+    run_id: str
+    search_term: str
+    search_location: str
+    started_at: str
+    finished_at: str
+    created_at: str
+    email_count: int
+    email_counters: Dict[str, Any] = {}
+
+
+@router.get("/records", response_model=List[QueryRecord])
+async def list_records():
+    """Get all query records from MongoDB."""
+    try:
+        # Import MongoDB functions
+        import sys
+        import os
+        scraper_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scraper"))
+        if scraper_path not in sys.path:
+            sys.path.insert(0, scraper_path)
+        
+        from core.mongodb import get_all_query_records
+        
+        records = await get_all_query_records()
+        
+        # Convert to Pydantic models
+        result = []
+        for record in records:
+            try:
+                result.append(QueryRecord(
+                    run_id=record.get("run_id", ""),
+                    search_term=record.get("search_term", ""),
+                    search_location=record.get("search_location", ""),
+                    started_at=record.get("started_at", ""),
+                    finished_at=record.get("finished_at", ""),
+                    created_at=record.get("created_at", ""),
+                    email_count=record.get("email_count", 0),
+                    email_counters=record.get("email_counters", {})
+                ))
+            except Exception as e:
+                print(f"Error converting record: {e}")
+                continue
+        
+        return result
+    except Exception as e:
+        print(f"Error fetching records: {e}")
+        return []
+
+
+@router.get("/records/{run_id}/download")
+async def download_record_csv(run_id: str):
+    """Download emails CSV for a specific query record from MongoDB."""
+    try:
+        # Import MongoDB functions
+        import sys
+        import os
+        scraper_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scraper"))
+        if scraper_path not in sys.path:
+            sys.path.insert(0, scraper_path)
+        
+        from core.mongodb import get_query_record_by_run_id
+        
+        record = await get_query_record_by_run_id(run_id)
+        
+        if not record or not record.get("emails"):
+            return {"error": "Record not found or no emails available"}
+        
+        emails_data = record.get("emails", [])
+        
+        # Convert from MongoDB format to CSV format
+        # MongoDB format: [{name, website, emails: [email1, email2, ...]}, ...]
+        # CSV format: [{name, website, email_1, email_2, email_3, ...}, ...]
+        
+        # Find max number of emails in any record to determine columns needed
+        max_emails = 0
+        for record_item in emails_data:
+            email_count = len(record_item.get("emails", []))
+            if email_count > max_emails:
+                max_emails = email_count
+        
+        # Generate CSV with email_1, email_2, ... columns
+        output = io.StringIO()
+        if emails_data:
+            # Create fieldnames: name, website, email_1, email_2, ...
+            fieldnames = ["name", "website"]
+            for i in range(1, max_emails + 1):
+                fieldnames.append(f"email_{i}")
+            
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for record_item in emails_data:
+                row = {
+                    "name": record_item.get("name", ""),
+                    "website": record_item.get("website", "")
+                }
+                
+                # Add emails to email_1, email_2, etc. columns
+                email_list = record_item.get("emails", [])
+                for i, email in enumerate(email_list, start=1):
+                    row[f"email_{i}"] = email
+                
+                writer.writerow(row)
+        
+        # Prepare response
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Create filename
+        search_term = record.get("search_term", "emails").replace(" ", "_")
+        filename = f"emails_{search_term}_{run_id}.csv"
+        
+        return StreamingResponse(
+            io.BytesIO(csv_content.encode('utf-8')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        print(f"Error downloading record CSV: {e}")
+        return {"error": str(e)}
+
+
+@router.delete("/records/{run_id}")
+async def delete_record(run_id: str):
+    """Delete a query record from MongoDB."""
+    try:
+        # Import MongoDB functions
+        import sys
+        import os
+        scraper_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scraper"))
+        if scraper_path not in sys.path:
+            sys.path.insert(0, scraper_path)
+        
+        from core.mongodb import delete_query_record
+        
+        success = await delete_query_record(run_id)
+        
+        if success:
+            return {"success": True, "message": f"Record {run_id} deleted"}
+        else:
+            return {"success": False, "message": f"Record {run_id} not found"}
+    except Exception as e:
+        print(f"Error deleting record: {e}")
+        return {"success": False, "error": str(e)}

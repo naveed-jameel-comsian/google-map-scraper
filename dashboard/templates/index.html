@@ -96,6 +96,7 @@
         <div class="tablist">
             <button class="tab active" data-tab="#running">Running</button>
             <button class="tab" data-tab="#history">History</button>
+            <button class="tab" data-tab="#records">Records</button>
         </div>
 
         <div id="running" class="tabpanel active"
@@ -106,6 +107,11 @@
         <div id="history" class="tabpanel"
              hx-get="/fragment/runs" hx-trigger="load, every 10s" hx-target="#history" hx-swap="innerHTML">
             <!-- runs history table loads here -->
+            </div>
+
+        <div id="records" class="tabpanel"
+             hx-get="/fragment/records" hx-trigger="load, every 10s" hx-target="#records" hx-swap="innerHTML">
+            <!-- records table loads here -->
             </div>
     </section>
 </div>

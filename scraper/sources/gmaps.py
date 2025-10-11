@@ -18,6 +18,17 @@ from core.proxy import new_session, playwright_proxy_config, get_alternative_pro
 from core.telemetry import JsonLogger, new_run_id
 import shutil
 
+# MongoDB integration for domain deduplication
+try:
+    from core.mongodb import is_domain_cached
+    MONGODB_AVAILABLE = True
+except Exception:
+    MONGODB_AVAILABLE = False
+    
+    async def is_domain_cached(domain: str) -> bool:
+        """Fallback when MongoDB is not available"""
+        return False
+
 HARD_WORKER_TIMEOUT = 90
 OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 
@@ -991,6 +1002,12 @@ async def run_gmaps(args) -> None:
     out_dir = OUT_ROOT
     logger = JsonLogger(out_dir, run_id)
 
+    # MongoDB status
+    if MONGODB_AVAILABLE:
+        print(f"{ts()} | INFO    | [gmaps] MongoDB domain deduplication: ENABLED")
+    else:
+        print(f"{ts()} | INFO    | [gmaps] MongoDB domain deduplication: DISABLED (not available)")
+    
     logger.info("[gmaps] job.start",
                 q=q, location=loc, limit=limit, concurrency=concurrency,
                 delays={"min": dmin, "max": dmax}, outfile=outfile)
@@ -1339,11 +1356,24 @@ async def run_gmaps(args) -> None:
                 **data,
             }
             # Domain-level de-duplication: keep only one record per website domain
-            domain = _normalize_domain(rec.get("website"))
+            domain = _normalize_domain(rec.get("website")) # heree
             if domain:
+                # Check in-memory cache first
                 if domain in seen_domains:
-                    print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate: {domain} name={rec.get('name')!r}")
+                    print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate (in-memory): {domain} name={rec.get('name')!r}")
                     return
+                
+                # Check MongoDB cache if available
+                if MONGODB_AVAILABLE:
+                    try:
+                        is_cached = await is_domain_cached(domain)
+                        if is_cached:
+                            print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate (MongoDB): {domain} name={rec.get('name')!r}")
+                            seen_domains.add(domain)  # Add to in-memory cache to avoid future DB queries
+                            return
+                    except Exception as e:
+                        print(f"{ts()} | WARN    | [gmaps] MongoDB check failed for {domain}: {e}")
+                
                 seen_domains.add(domain)
             to_jsonl(outfile, rec)
             to_jsonl(os.path.join(run_dir, "gmaps.jsonl"), rec)
@@ -1448,9 +1478,22 @@ async def run_gmaps(args) -> None:
                 # Domain-level de-duplication on retries as well
                 domain = _normalize_domain(rec.get("website"))
                 if domain:
+                    # Check in-memory cache first
                     if domain in seen_domains:
-                        print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate(retry): {domain} name={rec.get('name')!r}")
+                        print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate(retry, in-memory): {domain} name={rec.get('name')!r}")
                         return
+                    
+                    # Check MongoDB cache if available
+                    if MONGODB_AVAILABLE:
+                        try:
+                            is_cached = await is_domain_cached(domain)
+                            if is_cached:
+                                print(f"{ts()} | INFO    | [gmaps] skip domain-duplicate(retry, MongoDB): {domain} name={rec.get('name')!r}")
+                                seen_domains.add(domain)  # Add to in-memory cache to avoid future DB queries
+                                return
+                        except Exception as e:
+                            print(f"{ts()} | WARN    | [gmaps] MongoDB check failed for {domain}: {e}")
+                    
                     seen_domains.add(domain)
                 to_jsonl(outfile, rec)
                 to_jsonl(os.path.join(run_dir, "gmaps.jsonl"), rec)

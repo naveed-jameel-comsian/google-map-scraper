@@ -1,0 +1,83 @@
+<table class="table">
+    <thead>
+    <tr>
+        <th>Run ID</th>
+        <th>Query</th>
+        <th>Time</th>
+        <!-- <th style="width: 200px;">Counts</th> -->
+        <th>Download</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% if records %}
+        {% for r in records %}
+        <tr>
+            <td><code>{{ r.run_id }}</code></td>
+            <td>
+                <div>{{ r.search_term }} — {{ r.search_location }}</div>
+            </td>
+            <td>
+                <div class="muted small">
+                    {{ r.started_at }}{% if r.finished_at %} → {{ r.finished_at }}{% endif %}
+                </div>
+            </td>
+            <!-- <td>
+                <div>Businesses: {{ r.email_count or 0 }}</div>
+                <div>Sites: {{ r.sites_processed or 0 }}</div>
+                <div>Emails Found: {{ r.emails_verified or 0 }}</div>
+            </td> -->
+            <td>
+                <a class="btn btn-sm" href="/records/{{ r.run_id }}/download">Download emails CSV</a>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-danger" 
+                        onclick="deleteRecord('{{ r.run_id }}')" 
+                        title="Delete this record from database">
+                    Delete
+                </button>
+            </td>
+        </tr>
+        {% endfor %}
+    {% else %}
+        <tr>
+            <td colspan="6" style="text-align: center; padding: 2rem;">
+                <div class="muted">No records found. Records are saved when queries complete.</div>
+                <!-- <div class="muted small" style="margin-top: 0.5rem;">Make sure MongoDB is running and configured.</div> -->
+            </td>
+        </tr>
+    {% endif %}
+    </tbody>
+</table>
+
+<script>
+function deleteRecord(runId) {
+    if (!confirm(`Are you sure you want to delete record ${runId}?`)) {
+        return;
+    }
+    
+    fetch(`/records/${runId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload the records tab
+            htmx.trigger('#records', 'load');
+            // Show success message
+            const toast = document.createElement('div');
+            toast.className = 'toast success';
+            toast.textContent = `Record ${runId} deleted successfully`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        } else {
+            alert(`Failed to delete record: ${data.message || 'Unknown error'}`);
+        }
+    })
+    .catch(error => {
+        console.error('Error deleting record:', error);
+        alert('Error deleting record');
+    });
+}
+</script>
+

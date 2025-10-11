@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from .settings import RUNS_DIR, STATIC_DIR, TEMPLATES_DIR
 from .tasks import launch_scrape
 from .utils import read_json_safe, list_run_dirs, count_jsonl_lines, safe_child_path
+from . import api
 import os
 import signal
 import shutil
@@ -16,6 +17,9 @@ import psutil
 import glob
 
 app = FastAPI(title="Scraper Dashboard")
+
+# Include API router for records endpoints
+app.include_router(api.router)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -53,6 +57,39 @@ def fragment_running(request: Request):
     running = [r for r in runs if r.get("status") == "running"]
     running.sort(key=lambda r: r.get("started_at_num", 0.0), reverse=True)
     return templates.TemplateResponse("_running_table.html", {"request": request, "runs": running})
+
+
+@app.get("/fragment/records", response_class=HTMLResponse)
+async def fragment_records(request: Request):
+    """Fetch and display records from MongoDB."""
+    try:
+        import sys
+        scraper_path = Path(__file__).resolve().parents[2] / "scraper"
+        if str(scraper_path) not in sys.path:
+            sys.path.insert(0, str(scraper_path))
+        
+        from core.mongodb import get_all_query_records
+        
+        records = await get_all_query_records()
+        
+        # Format records for display
+        formatted_records = []
+        for record in records:
+            formatted_records.append({
+                "run_id": record.get("run_id", ""),
+                "search_term": record.get("search_term", ""),
+                "search_location": record.get("search_location", ""),
+                "started_at": record.get("started_at", ""),
+                "finished_at": record.get("finished_at", ""),
+                "email_count": record.get("email_count", 0),
+                "sites_processed": record.get("email_counters", {}).get("sites_processed", 0),
+                "emails_verified": record.get("email_counters", {}).get("emails_verified", 0)
+            })
+        
+        return templates.TemplateResponse("_records_table.html", {"request": request, "records": formatted_records})
+    except Exception as e:
+        print(f"Error loading records: {e}")
+        return templates.TemplateResponse("_records_table.html", {"request": request, "records": []})
 
 
 @app.post("/launch", response_class=HTMLResponse)

@@ -1114,6 +1114,101 @@ def main():
         )
         if logger:
             logger.info("[emails] job.done", processed=processed, emails_verified=verified_total)
+        
+        # Save query record to MongoDB
+        if MONGODB_AVAILABLE and csv_export_ok:
+            try:
+                from core.mongodb import save_query_record, reset_mongodb_connection
+                
+                # Reset MongoDB connection to ensure fresh state
+                reset_mongodb_connection()
+                
+                # Read metadata to get search term and location
+                meta = _safe_load_json(meta_path)
+                search_term = meta.get("search_term", "")
+                search_location = meta.get("search_location", "")
+                started_at = meta.get("started_at", "")
+                
+                # Read emails from CSV file and transform to better format
+                emails_data = []
+                emails_csv_path = files.get("emails_csv")
+                if emails_csv_path and os.path.exists(emails_csv_path):
+                    try:
+                        with open(emails_csv_path, "r", encoding="utf-8") as f:
+                            reader = csv.DictReader(f)
+                            for row in reader:
+                                # Extract name and website
+                                name = row.get("name", "")
+                                website = row.get("website", "")
+                                
+                                # Collect all email_X columns into an emails array
+                                emails = []
+                                for key in row.keys():
+                                    if key.startswith("email_") and row[key]:
+                                        # Only add non-empty emails
+                                        email_val = row[key].strip()
+                                        if email_val:
+                                            emails.append(email_val)
+                                
+                                # Only save records that have at least one email
+                                if emails:
+                                    emails_data.append({
+                                        "name": name,
+                                        "website": website,
+                                        "emails": emails,
+                                        "email_count": len(emails)
+                                    })
+                        info(f"Read {len(emails_data)} records from CSV for database storage")
+                    except Exception as e:
+                        warn(f"Failed to read emails CSV for database storage: {e}")
+                
+                # Save to database using a fresh event loop
+                if emails_data:
+                    try:
+                        info(f"Attempting to save {len(emails_data)} business records to MongoDB...")
+                        info(f"MongoDB config: uri={os.getenv('MONGODB_URI', 'mongodb://localhost:27017')}, db={os.getenv('MONGODB_DATABASE', 'email_scraper')}")
+                        
+                        # Create a new event loop for this operation
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        
+                        # Enable logging for MongoDB operations
+                        import logging
+                        mongodb_logger = logging.getLogger('core.mongodb')
+                        mongodb_logger.setLevel(logging.DEBUG)
+                        if not mongodb_logger.handlers:
+                            handler = logging.StreamHandler()
+                            handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+                            mongodb_logger.addHandler(handler)
+                        
+                        try:
+                            info(f"Calling save_query_record with run_id={run_id}, businesses={len(emails_data)}")
+                            success = loop.run_until_complete(save_query_record(
+                                run_id=run_id,
+                                search_term=search_term,
+                                search_location=search_location,
+                                started_at=started_at,
+                                finished_at=finished_ts,
+                                emails=emails_data,
+                                email_counters={"sites_processed": processed, "emails_verified": verified_total}
+                            ))
+                            info(f"save_query_record returned: {success}")
+                            
+                            if success:
+                                info(f"✓ Query record saved to database: {run_id} ({len(emails_data)} businesses)")
+                            else:
+                                warn(f"✗ Failed to save query record to database: {run_id} (save returned False)")
+                                warn(f"   This usually means MongoDB connection failed. Check logs above for connection errors.")
+                        finally:
+                            loop.close()
+                    except Exception as e:
+                        warn(f"✗ Error saving query record to database: {type(e).__name__}: {e}")
+                        import traceback
+                        warn(f"Traceback: {traceback.format_exc()}")
+                else:
+                    info("No emails to save to database (no businesses with emails found)")
+            except Exception as e:
+                warn(f"Error saving query record to database: {e}")
 
     except Exception as e:
         if logger:
@@ -1135,8 +1230,14 @@ def main():
         if MONGODB_AVAILABLE:
             try:
                 from core.mongodb import close_mongodb_connection
-                asyncio.run(close_mongodb_connection())
-                info("MongoDB connection closed")
+                # Use a fresh event loop for cleanup
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(close_mongodb_connection())
+                    info("MongoDB connection closed")
+                finally:
+                    loop.close()
             except Exception as e:
                 warn(f"Error closing MongoDB connection: {e}")
 
