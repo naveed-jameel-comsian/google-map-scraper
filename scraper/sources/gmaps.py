@@ -357,6 +357,21 @@ class BrowserPool:
         for i in range(self.size):
             tag = f"w{i:03d}"
             proxy_cfg = _proxy_with_session(self.args, tag)
+            
+            # Test proxy connection before proceeding
+            if proxy_cfg:
+                print(f"{ts()} | DEBUG   | [gmaps] testing proxy before starting...")
+                proxy_working, working_config = await test_proxy_connection(proxy_cfg)
+                if not proxy_working:
+                    print(f"{ts()} | WARNING | [gmaps] proxy test failed, but continuing anyway...")
+                else:
+                    print(f"{ts()} | INFO    | [gmaps] proxy test passed")
+                    # Use the working config if we found one
+                    if working_config and working_config != proxy_cfg:
+                        print(f"{ts()} | INFO    | [gmaps] using alternative proxy config: {working_config.get('server')}")
+                        proxy_cfg = working_config
+            
+            print(f"{ts()} | DEBUG   | [gmaps] launching browser with proxy_cfg={bool(proxy_cfg)}")
             # Stabilize Chromium on Linux/EC2
             browser: Browser = await self.pw.chromium.launch(
                 headless=True,
@@ -967,6 +982,7 @@ async def run_gmaps(args) -> None:
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
     ip_per_worker = 1 # int(getattr(args, "ip_per_worker", 1) or 1)
+    args.use_proxy = 0
     # use_proxy = int(getattr(args, "use_proxy", 0) or 0)
 
     q_full = f"{q} {loc}".strip()
