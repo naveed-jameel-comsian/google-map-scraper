@@ -67,22 +67,22 @@ async def get_mongodb_client() -> Optional[Any]:
             # Test connection with shorter timeout
             print(f"[MongoDB] Sending ping command to test connection...")
             await asyncio.wait_for(_mongodb_client.admin.command('ping'), timeout=2.0)
-            msg = f"✓ Successfully connected to MongoDB at {MONGODB_URI}"
+            msg = f"[SUCCESS] Successfully connected to MongoDB at {MONGODB_URI}"
             print(f"[MongoDB] {msg}")
             logger.info(msg)
         except asyncio.TimeoutError:
-            msg = f"✗ MongoDB connection timeout at {MONGODB_URI} - Is MongoDB running?"
+            msg = f"[ERROR] MongoDB connection timeout at {MONGODB_URI} - Is MongoDB running?"
             print(f"[MongoDB] ERROR: {msg}")
             logger.warning(msg)
             _mongodb_client = None
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-            msg = f"✗ Failed to connect to MongoDB at {MONGODB_URI}: {e}"
+            msg = f"[ERROR] Failed to connect to MongoDB at {MONGODB_URI}: {e}"
             print(f"[MongoDB] ERROR: {msg}")
             logger.warning(msg)
             logger.warning("Hint: Start MongoDB with 'brew services start mongodb-community' or 'sudo systemctl start mongodb'")
             _mongodb_client = None
         except Exception as e:
-            msg = f"✗ Unexpected error connecting to MongoDB: {type(e).__name__}: {e}"
+            msg = f"[ERROR] Unexpected error connecting to MongoDB: {type(e).__name__}: {e}"
             print(f"[MongoDB] ERROR: {msg}")
             logger.warning(msg)
             _mongodb_client = None
@@ -414,7 +414,7 @@ async def save_query_record(
         print(f"[MongoDB] replace_one completed: upserted_id={result.upserted_id}, modified={result.modified_count}")
         
         if result.upserted_id or result.modified_count:
-            msg = f"✓ Successfully saved query record: run_id={run_id}, businesses={len(emails)}, upserted={bool(result.upserted_id)}, modified={result.modified_count}"
+            msg = f"[SUCCESS] Successfully saved query record: run_id={run_id}, businesses={len(emails)}, upserted={bool(result.upserted_id)}, modified={result.modified_count}"
             print(f"[MongoDB] {msg}")
             logger.info(msg)
             return True

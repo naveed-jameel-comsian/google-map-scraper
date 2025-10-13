@@ -81,7 +81,7 @@ if HUNTER_API_KEY:
     masked = HUNTER_API_KEY[:4] + "…" if len(HUNTER_API_KEY) > 4 else "****"
     print(f"{ts()} | INFO  | HUNTER_API_KEY detected ({masked})")
 else:
-    print(f"{ts()} | WARN  | HUNTER_API_KEY missing → verification disabled")
+    print(f"{ts()} | WARN  | HUNTER_API_KEY missing -> verification disabled")
 
 
 def info(msg: str) -> None:
@@ -1062,9 +1062,9 @@ def main():
         try:
             info(f"emails CSV exported started----------------------")
             _emails_jsonl_to_csv(run_emails_path, files["emails_csv"])
-            info(f"emails CSV exported → {files['emails_csv']}")
+            info(f"emails CSV exported -> {files['emails_csv']}")
             # nuniq = _export_unique_emails_csv(run_emails_path, files["unique_emails_csv"])
-            # info(f"unique emails CSV exported ({nuniq}) → {files['unique_emails_csv']}")
+            # info(f"unique emails CSV exported ({nuniq}) -> {files['unique_emails_csv']}")
             csv_export_ok = True
         except Exception as e:
             warn(f"emails CSV export failed: {e}")
@@ -1083,23 +1083,7 @@ def main():
         if logger:
             logger.info("[emails] job.done", processed=processed, emails_verified=verified_total)
 
-        if csv_export_ok:
-            emails_jsonl_path = files.get("emails_jsonl")
-            if emails_jsonl_path:
-                try:
-                    if os.path.exists(emails_jsonl_path):
-                        os.remove(emails_jsonl_path)
-                        info(f"deleted emails JSONL → {emails_jsonl_path}")
-                except Exception as e:
-                    warn(f"failed to delete emails JSONL {emails_jsonl_path}: {e}")
 
-            if args.infile:
-                try:
-                    if os.path.exists(args.infile):
-                        os.remove(args.infile)
-                        info(f"deleted input JSONL → {args.infile}")
-                except Exception as e:
-                    warn(f"failed to delete input JSONL {args.infile}: {e}")
 
         finished_ts = ts()
 
@@ -1115,8 +1099,8 @@ def main():
         if logger:
             logger.info("[emails] job.done", processed=processed, emails_verified=verified_total)
         
-        # Save query record to MongoDB
-        if MONGODB_AVAILABLE and csv_export_ok:
+        # Save query record to MongoDB (independent of CSV export)
+        if MONGODB_AVAILABLE:
             try:
                 from core.mongodb import save_query_record, reset_mongodb_connection
                 
@@ -1129,38 +1113,31 @@ def main():
                 search_location = meta.get("search_location", "")
                 started_at = meta.get("started_at", "")
                 
-                # Read emails from CSV file and transform to better format
+                # Read emails directly from JSONL file (not dependent on CSV export)
                 emails_data = []
-                emails_csv_path = files.get("emails_csv")
-                if emails_csv_path and os.path.exists(emails_csv_path):
+                if run_emails_path and os.path.exists(run_emails_path):
                     try:
-                        with open(emails_csv_path, "r", encoding="utf-8") as f:
-                            reader = csv.DictReader(f)
-                            for row in reader:
-                                # Extract name and website
-                                name = row.get("name", "")
-                                website = row.get("website", "")
-                                
-                                # Collect all email_X columns into an emails array
-                                emails = []
-                                for key in row.keys():
-                                    if key.startswith("email_") and row[key]:
-                                        # Only add non-empty emails
-                                        email_val = row[key].strip()
-                                        if email_val:
-                                            emails.append(email_val)
-                                
-                                # Only save records that have at least one email
-                                if emails:
-                                    emails_data.append({
-                                        "name": name,
-                                        "website": website,
-                                        "emails": emails,
-                                        "email_count": len(emails)
-                                    })
-                        info(f"Read {len(emails_data)} records from CSV for database storage")
+                        with open(run_emails_path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                with contextlib.suppress(Exception):
+                                    obj = json.loads(line)
+                                    name = obj.get("name", "")
+                                    website = obj.get("website", "")
+                                    # Extract base URL (protocol + domain) from full URL
+                                    normalized_website = extract_base_url(website) if website else ""
+                                    verified_emails = obj.get("verified_emails", [])
+                                    
+                                    # Only save records that have at least one email
+                                    if verified_emails:
+                                        emails_data.append({
+                                            "name": name,
+                                            "website": normalized_website,
+                                            "emails": verified_emails,
+                                            "email_count": len(verified_emails)
+                                        })
+                        info(f"Read {len(emails_data)} records from emails JSONL for database storage")
                     except Exception as e:
-                        warn(f"Failed to read emails CSV for database storage: {e}")
+                        warn(f"Failed to read emails JSONL for database storage: {e}")
                 
                 # Save to database using a fresh event loop
                 if emails_data:
@@ -1195,14 +1172,14 @@ def main():
                             info(f"save_query_record returned: {success}")
                             
                             if success:
-                                info(f"✓ Query record saved to database: {run_id} ({len(emails_data)} businesses)")
+                                info(f"[SUCCESS] Query record saved to database: {run_id} ({len(emails_data)} businesses)")
                             else:
-                                warn(f"✗ Failed to save query record to database: {run_id} (save returned False)")
+                                warn(f"[FAILED] Failed to save query record to database: {run_id} (save returned False)")
                                 warn(f"   This usually means MongoDB connection failed. Check logs above for connection errors.")
                         finally:
                             loop.close()
                     except Exception as e:
-                        warn(f"✗ Error saving query record to database: {type(e).__name__}: {e}")
+                        warn(f"[ERROR] Error saving query record to database: {type(e).__name__}: {e}")
                         import traceback
                         warn(f"Traceback: {traceback.format_exc()}")
                 else:
@@ -1210,6 +1187,24 @@ def main():
             except Exception as e:
                 warn(f"Error saving query record to database: {e}")
 
+        if csv_export_ok:
+            emails_jsonl_path = files.get("emails_jsonl")
+            if emails_jsonl_path:
+                try:
+                    if os.path.exists(emails_jsonl_path):
+                        os.remove(emails_jsonl_path)
+                        info(f"deleted emails JSONL -> {emails_jsonl_path}")
+                except Exception as e:
+                    warn(f"failed to delete emails JSONL {emails_jsonl_path}: {e}")
+
+            if args.infile:
+                try:
+                    if os.path.exists(args.infile):
+                        os.remove(args.infile)
+                        info(f"deleted input JSONL -> {args.infile}")
+                except Exception as e:
+                    warn(f"failed to delete input JSONL {args.infile}: {e}")
+                    
     except Exception as e:
         if logger:
             logger.warn("[emails] job.error", error=str(e))
