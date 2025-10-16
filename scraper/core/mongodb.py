@@ -446,6 +446,7 @@ async def get_all_query_records() -> List[Dict[str, Any]]:
         List of query record documents
     """
     try:
+        print("get_all_query_records-------------------")
         collection = await get_mongodb_records_collection()
         if collection is None:
             return []
@@ -481,6 +482,7 @@ async def get_query_record_by_run_id(run_id: str) -> Optional[Dict[str, Any]]:
         Query record document if found, None otherwise
     """
     try:
+        print("get_query_record_by_run_id-----------------")
         collection = await get_mongodb_records_collection()
         if collection is None:
             return None
