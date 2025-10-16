@@ -558,20 +558,20 @@ async def scrape_site(start_url: str,
         return []
 
     # First check MongoDB cache
-    if MONGODB_AVAILABLE:
-        try:
-            info(f"checking MongoDB cache for {root_domain} ...")
-            cached_emails = await get_emails_for_domain(root_domain)
-            if cached_emails:
-                info(f"MongoDB cache hit: found {len(cached_emails)} emails for {root_domain}")
-                # Convert cached emails back to the expected format
-                return [{"email": email_doc["email"], "found_on": email_doc.get("found_on", "cached")} 
-                       for email_doc in cached_emails]
-            else:
-                info(f"MongoDB cache miss for {root_domain}, proceeding with scraping...")
-        except Exception as e:
-            warn(f"MongoDB cache check failed for {root_domain}: {e}")
-            info(f"Proceeding with scraping despite MongoDB error...")
+    # if MONGODB_AVAILABLE:
+    #     try:
+    #         info(f"checking MongoDB cache for {root_domain} ...")
+    #         cached_emails = await get_emails_for_domain(root_domain)
+    #         if cached_emails:
+    #             info(f"MongoDB cache hit: found {len(cached_emails)} emails for {root_domain}")
+    #             # Convert cached emails back to the expected format
+    #             return [{"email": email_doc["email"], "found_on": email_doc.get("found_on", "cached")} 
+    #                    for email_doc in cached_emails]
+    #         else:
+    #             info(f"MongoDB cache miss for {root_domain}, proceeding with scraping...")
+    #     except Exception as e:
+    #         warn(f"MongoDB cache check failed for {root_domain}: {e}")
+    #         info(f"Proceeding with scraping despite MongoDB error...")
 
     # First try Hunter domain search
     info(f"trying Hunter domain search for {root_domain} ...")
@@ -1187,23 +1187,23 @@ def main():
             except Exception as e:
                 warn(f"Error saving query record to database: {e}")
 
-        if csv_export_ok:
-            emails_jsonl_path = files.get("emails_jsonl")
-            if emails_jsonl_path:
-                try:
-                    if os.path.exists(emails_jsonl_path):
-                        os.remove(emails_jsonl_path)
-                        info(f"deleted emails JSONL -> {emails_jsonl_path}")
-                except Exception as e:
-                    warn(f"failed to delete emails JSONL {emails_jsonl_path}: {e}")
+        # if csv_export_ok:
+        #     emails_jsonl_path = files.get("emails_jsonl")
+        #     if emails_jsonl_path:
+        #         try:
+        #             if os.path.exists(emails_jsonl_path):
+        #                 os.remove(emails_jsonl_path)
+        #                 info(f"deleted emails JSONL -> {emails_jsonl_path}")
+        #         except Exception as e:
+        #             warn(f"failed to delete emails JSONL {emails_jsonl_path}: {e}")
 
-            if args.infile:
-                try:
-                    if os.path.exists(args.infile):
-                        os.remove(args.infile)
-                        info(f"deleted input JSONL -> {args.infile}")
-                except Exception as e:
-                    warn(f"failed to delete input JSONL {args.infile}: {e}")
+        #     if args.infile:
+        #         try:
+        #             if os.path.exists(args.infile):
+        #                 os.remove(args.infile)
+        #                 info(f"deleted input JSONL -> {args.infile}")
+        #         except Exception as e:
+        #             warn(f"failed to delete input JSONL {args.infile}: {e}")
                     
     except Exception as e:
         if logger:
@@ -1242,5 +1242,5 @@ def main():
 if __name__ == "__main__":
     main()
     # import asyncio
-    # result = asyncio.run(scrape_site("http://www.angelesurgentcare.com", max_pages=20, include_external=False))
+    # result = asyncio.run(scrape_site("https://mytexasmd.com/location-houston-willowbrook", max_pages=20, include_external=False))
     # print(result)
