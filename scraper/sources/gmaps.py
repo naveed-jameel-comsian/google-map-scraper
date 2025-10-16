@@ -300,7 +300,7 @@ def _proxy_from_args(args) -> Optional[Dict[str, Any]]:
         print(f"{ts()} | INFO    | [proxy] OFF")
         return None
     
-    mode = getattr(args, "proxy_mode", None)
+    mode = getattr(args, "proxy_mode", "rotating")
     print(f"{ts()} | DEBUG   | [proxy] mode={mode}")
     
     try:
@@ -982,7 +982,7 @@ async def run_gmaps(args) -> None:
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
     ip_per_worker = 1 # int(getattr(args, "ip_per_worker", 1) or 1)
-    args.use_proxy = 0
+    args.use_proxy = 1
     # use_proxy = int(getattr(args, "use_proxy", 0) or 0)
 
     q_full = f"{q} {loc}".strip()
