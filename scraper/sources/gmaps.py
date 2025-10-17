@@ -142,7 +142,7 @@ async def _test_single_proxy_config(proxy_cfg: Dict[str, Any]) -> Tuple[bool, st
     """
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=False, proxy=proxy_cfg)
+            browser = await pw.chromium.launch(headless=True, proxy=proxy_cfg)
             context = await browser.new_context()
             page = await context.new_page()
             
@@ -1078,103 +1078,6 @@ async def run_gmaps(args) -> None:
             ctx.set_default_navigation_timeout(15000)
             page: Page = await ctx.new_page()
 
-        # try:
-        #     await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-        #     await _click_consent_if_present(page)
-        # except Exception:
-        #     pass
-
-        # # Detect navigation failures early (commonly due to proxy misconfiguration)
-        # try:
-        #     current_url = page.url
-        #     print(f"{ts()} | DEBUG   | [gmaps] initial page load - url={current_url}")
-        # except Exception as e:
-        #     current_url = ""
-        #     print(f"{ts()} | ERROR   | [gmaps] failed to get page url: {e}")
-        
-        # if not current_url or current_url.startswith("chrome-error://"):
-        #     print(f"{ts()} | ERROR   | [gmaps] navigation failed url={current_url or '(empty)'}")
-        #     print(f"{ts()} | DEBUG   | [gmaps] start_url was: {start_url}")
-        #     print(f"{ts()} | DEBUG   | [gmaps] proxy was enabled: {getattr(args, 'use_proxy', 0)}")
-        #     print(f"{ts()} | DEBUG   | [gmaps] ip_per_worker mode: {ip_per_worker}")
-            
-            # Log detailed error info
-            # try:
-            #     page_content = await page.content()
-            #     print(f"{ts()} | DEBUG   | [gmaps] page content length: {len(page_content)}")
-            #     if "chrome-error" in page_content:
-            #         print(f"{ts()} | ERROR   | [gmaps] chrome-error page detected")
-            #     if "blocked" in page_content.lower() or "access denied" in page_content.lower():
-            #         print(f"{ts()} | ERROR   | [gmaps] access blocked page detected")
-            # except Exception as e:
-            #     print(f"{ts()} | DEBUG   | [gmaps] could not get page content: {e}")
-            
-            # # Retry once without proxy if a proxy was requested and we're not in ip_per_worker mode
-            # if not ip_per_worker and getattr(args, "use_proxy", 0):
-            #     print(f"{ts()} | INFO    | [gmaps] retrying without proxy due to navigation failure ...")
-            #     try:
-            #         with contextlib.suppress(Exception):
-            #             await ctx.close()
-            #             print(f"{ts()} | DEBUG   | [gmaps] closed browser context")
-            #         with contextlib.suppress(Exception):
-            #             await browser.close()
-            #             print(f"{ts()} | DEBUG   | [gmaps] closed browser")
-                    
-            #         print(f"{ts()} | DEBUG   | [gmaps] launching browser without proxy...")
-            #         browser = await pw.chromium.launch(
-            #             headless=False,
-            #             proxy=None,
-            #             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
-            #         )
-            #         ctx = await browser.new_context(
-            #             viewport={"width": 1440, "height": 900},
-            #             device_scale_factor=1.0,
-            #             locale="en-US",
-            #             extra_http_headers={
-            #                 "Accept-Language": "en-US,en;q=0.9",
-            #                 "User-Agent": GMAPS_DEFAULT_HEADERS["User-Agent"],
-            #             },
-            #         )
-            #         ctx.set_default_timeout(8000)
-            #         ctx.set_default_navigation_timeout(15000)
-            #         page = await ctx.new_page()
-            #         print(f"{ts()} | DEBUG   | [gmaps] retrying navigation to {start_url}")
-                    
-            #         try:
-            #             await page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-            #             await _click_consent_if_present(page)
-            #             current_url = page.url
-            #             print(f"{ts()} | DEBUG   | [gmaps] retry successful - url={current_url}")
-            #         except Exception as e:
-            #             current_url = ""
-            #             print(f"{ts()} | ERROR   | [gmaps] retry navigation failed: {e}")
-            #             import traceback
-            #             print(f"{ts()} | DEBUG   | [gmaps] retry traceback: {traceback.format_exc()}")
-            #     except Exception as e:
-            #         print(f"{ts()} | ERROR   | [gmaps] browser retry setup failed: {e}")
-            #         import traceback
-            #         print(f"{ts()} | DEBUG   | [gmaps] browser retry traceback: {traceback.format_exc()}")
-            
-            # if not current_url or current_url.startswith("chrome-error://"):
-            #     print(f"{ts()} | ERROR   | [gmaps] still cannot load Google Maps. Check proxy creds or run with --use_proxy 0")
-            #     print(f"{ts()} | DEBUG   | [gmaps] final current_url: {current_url}")
-            #     logger.error("[gmaps] startup.navigation_failed", start_url=start_url, final_url=current_url)
-            #     logger.close()
-            #     # Mark run as failed and exit early
-            #     _append_meta(meta_path,
-            #                  status="done",
-            #                  phase="maps_scraping_failed",
-            #                  counters={"queued": 0, "written": 0, "failures": 0},
-            #                  error=f"navigation_failed: {current_url}")
-            #     if ip_per_worker:
-            #         await pool.close()
-            #     else:
-            #         with contextlib.suppress(Exception):
-            #             await ctx.close()
-            #         with contextlib.suppress(Exception):
-            #             await browser.close()
-            #     return
-
         # 1) Collect hrefs for the main query and variants in parallel
         async def _progress_update(payload: Dict[str, int]) -> None:
             try:
@@ -1313,6 +1216,64 @@ async def run_gmaps(args) -> None:
         hrefs = dedupe_hrefs(all_hrefs) 
         print(f"{ts()} | INFO    | [gmaps] combined results after deduplicate : {len(hrefs)} total hrefs (main: {len(main_hrefs or [])}, variants: {len(variant_hrefs or [])})")
 
+        # ============================================================
+        # COST OPTIMIZATION: Switch to non-proxy browser for processing
+        # ============================================================
+        print(f"{ts()} | INFO    | [gmaps] switching to non-proxy browser for processing URLs (cost optimization)")
+        
+        # Close proxy-enabled pages and contexts
+        try:
+            await page.close()
+            print(f"{ts()} | INFO    | [gmaps] closed proxy-enabled page")
+        except Exception as e:
+            print(f"{ts()} | WARN    | [gmaps] error closing proxy page: {e}")
+        
+        # Create new BrowserPool or context WITHOUT proxy for processing
+        if ip_per_worker:
+            # Close proxy-enabled pool
+            await pool.close()
+            print(f"{ts()} | INFO    | [gmaps] closed proxy-enabled browser pool")
+            
+            # Create new pool WITHOUT proxy
+            # Temporarily store original proxy setting
+            original_use_proxy = args.use_proxy
+            args.use_proxy = 0  # Disable proxy
+            
+            processing_pool = BrowserPool(pw, args, concurrency)
+            await processing_pool.start()
+            print(f"{ts()} | INFO    | [gmaps] started non-proxy browser pool for processing")
+            
+            # Restore original proxy setting
+            args.use_proxy = original_use_proxy
+        else:
+            # Close proxy-enabled browser
+            try:
+                await ctx.close()
+                await browser.close()
+                print(f"{ts()} | INFO    | [gmaps] closed proxy-enabled browser")
+            except Exception as e:
+                print(f"{ts()} | WARN    | [gmaps] error closing proxy browser: {e}")
+            
+            # Create new browser WITHOUT proxy
+            print(f"{ts()} | DEBUG   | [gmaps] launching non-proxy browser for processing")
+            processing_browser: Browser = await pw.chromium.launch(
+                headless=True,
+                proxy=None,  # No proxy!
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
+            )
+            processing_ctx: BrowserContext = await processing_browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                device_scale_factor=1.0,
+                locale="en-US",
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "User-Agent": GMAPS_DEFAULT_HEADERS["User-Agent"],
+                },
+            )
+            processing_ctx.set_default_timeout(8000)
+            processing_ctx.set_default_navigation_timeout(20000)
+            print(f"{ts()} | INFO    | [gmaps] non-proxy browser ready for processing")
+
         metrics = Metrics()
         failures = []
         metrics.queued = len(hrefs)
@@ -1353,13 +1314,13 @@ async def run_gmaps(args) -> None:
                 return
 
             if ip_per_worker:
-                idx = pool._rr % pool.size
-                pool._rr += 1
-                async with pool.locks[idx]:
-                    use_ctx = pool.contexts[idx]
+                idx = processing_pool._rr % processing_pool.size
+                processing_pool._rr += 1
+                async with processing_pool.locks[idx]:
+                    use_ctx = processing_pool.contexts[idx]
                     data, fail_reason = await with_sem(sem, guarded_process_with_wall(use_ctx, h))
             else:
-                data, fail_reason = await with_sem(sem, guarded_process_with_wall(ctx, h))
+                data, fail_reason = await with_sem(sem, guarded_process_with_wall(processing_ctx, h))
 
             if not data:
                 failures.append((h, fail_reason or "no_data"))
@@ -1473,13 +1434,13 @@ async def run_gmaps(args) -> None:
                     return
 
                 if ip_per_worker:
-                    idx = pool._rr % pool.size
-                    pool._rr += 1
-                    async with pool.locks[idx]:
-                        use_ctx = pool.contexts[idx]
+                    idx = processing_pool._rr % processing_pool.size
+                    processing_pool._rr += 1
+                    async with processing_pool.locks[idx]:
+                        use_ctx = processing_pool.contexts[idx]
                         data, fail_reason = await with_sem(sem, guarded_process_with_wall(use_ctx, h))
                 else:
-                    data, fail_reason = await with_sem(sem, guarded_process_with_wall(ctx, h))
+                    data, fail_reason = await with_sem(sem, guarded_process_with_wall(processing_ctx, h))
 
                 if not data:
                     failures.append((h, fail_reason or "no_data"))
@@ -1568,10 +1529,14 @@ async def run_gmaps(args) -> None:
                     shutil.copyfile(outfile, run_gmaps_jsonl)
             except Exception:
                 pass
+        
+        # Close the non-proxy processing browser/pool
         if ip_per_worker:
-            await pool.close()
+            await processing_pool.close()
+            print(f"{ts()} | INFO    | [gmaps] closed non-proxy processing pool")
         else:
             with contextlib.suppress(Exception):
-                await ctx.close()
+                await processing_ctx.close()
             with contextlib.suppress(Exception):
-                await browser.close()
+                await processing_browser.close()
+            print(f"{ts()} | INFO    | [gmaps] closed non-proxy processing browser")
