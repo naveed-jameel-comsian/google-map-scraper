@@ -27,6 +27,7 @@ MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "email_scraper")
 MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "domain_emails")
 MONGODB_RECORDS_COLLECTION = os.getenv("MONGODB_RECORDS_COLLECTION", "query_records")
+MONGODB_EMAILS_COLLECTION = os.getenv("MONGODB_EMAILS_COLLECTION", "emails")
 MONGODB_DISABLED = os.getenv("MONGODB_DISABLED", "false").lower() in ("true", "1", "yes")
 
 # Global MongoDB connection
@@ -34,6 +35,7 @@ _mongodb_client: Optional[Any] = None
 _mongodb_db: Optional[Any] = None
 _mongodb_collection: Optional[Any] = None
 _mongodb_records_collection: Optional[Any] = None
+_mongodb_emails_collection: Optional[Any] = None
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,7 @@ async def get_mongodb_collection() -> Optional[Any]:
 
 async def close_mongodb_connection():
     """Close MongoDB connection."""
-    global _mongodb_client, _mongodb_db, _mongodb_collection, _mongodb_records_collection
+    global _mongodb_client, _mongodb_db, _mongodb_collection, _mongodb_records_collection, _mongodb_emails_collection
     
     if _mongodb_client:
         _mongodb_client.close()
@@ -123,11 +125,12 @@ async def close_mongodb_connection():
         _mongodb_db = None
         _mongodb_collection = None
         _mongodb_records_collection = None
+        _mongodb_emails_collection = None
 
 
 def reset_mongodb_connection():
     """Reset MongoDB connection state (synchronous helper)."""
-    global _mongodb_client, _mongodb_db, _mongodb_collection, _mongodb_records_collection
+    global _mongodb_client, _mongodb_db, _mongodb_collection, _mongodb_records_collection, _mongodb_emails_collection
     
     if _mongodb_client:
         _mongodb_client.close()
@@ -136,6 +139,7 @@ def reset_mongodb_connection():
     _mongodb_db = None
     _mongodb_collection = None
     _mongodb_records_collection = None
+    _mongodb_emails_collection = None
     logger.info("MongoDB connection state reset")
 
 
@@ -535,4 +539,111 @@ async def delete_query_record(run_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error deleting query record for run_id {run_id}: {e}")
         return False
+
+
+# Emails Collection Functions
+
+async def get_mongodb_emails_collection() -> Optional[Any]:
+    """Get MongoDB collection for individual emails."""
+    global _mongodb_db, _mongodb_emails_collection
+    
+    if _mongodb_emails_collection is None:
+        client = await get_mongodb_client()
+        if client is not None:
+            _mongodb_db = client[MONGODB_DATABASE]
+            _mongodb_emails_collection = _mongodb_db[MONGODB_EMAILS_COLLECTION]
+            
+            # Create indexes for better performance (non-critical, ignore errors)
+            try:
+                await asyncio.wait_for(
+                    _mongodb_emails_collection.create_index("email", unique=True),
+                    timeout=2.0
+                )
+                await asyncio.wait_for(
+                    _mongodb_emails_collection.create_index("created_at"),
+                    timeout=2.0
+                )
+                logger.info("MongoDB emails indexes created successfully")
+            except (asyncio.TimeoutError, RuntimeError) as e:
+                logger.debug(f"Skipped index creation (will retry later): {type(e).__name__}")
+            except Exception as e:
+                logger.debug(f"Failed to create MongoDB emails indexes: {e}")
+    
+    return _mongodb_emails_collection
+
+
+async def check_email_exists(email: str) -> bool:
+    """
+    Check if an email already exists in the emails collection.
+    
+    Args:
+        email: The email address to check (will be lowercased)
+        
+    Returns:
+        True if email exists in database, False otherwise
+    """
+    try:
+        collection = await get_mongodb_emails_collection()
+        if collection is None:
+            return False
+        
+        # Query for the email (case-insensitive)
+        count = await asyncio.wait_for(
+            collection.count_documents({"email": email.lower()}, limit=1),
+            timeout=2.0
+        )
+        return count > 0
+        
+    except asyncio.TimeoutError:
+        logger.debug(f"MongoDB query timeout checking email: {email}")
+        return False
+    except Exception as e:
+        logger.debug(f"Error checking if email exists: {email}: {e}")
+        return False
+
+
+async def check_emails_exist_batch(emails: List[str]) -> Dict[str, bool]:
+    """
+    Check if multiple emails exist in the emails collection (batch operation).
+    
+    Args:
+        emails: List of email addresses to check
+        
+    Returns:
+        Dictionary mapping email -> exists (True/False)
+    """
+    try:
+        collection = await get_mongodb_emails_collection()
+        if collection is None:
+            return {email.lower(): False for email in emails}
+        
+        # Normalize emails to lowercase
+        email_map = {email.lower(): False for email in emails}
+        
+        # Query for all emails in batch
+        cursor = collection.find(
+            {"email": {"$in": list(email_map.keys())}},
+            {"email": 1, "_id": 0}
+        )
+        
+        existing_emails = await asyncio.wait_for(
+            cursor.to_list(length=len(emails)),
+            timeout=5.0
+        )
+        
+        # Mark existing emails as True
+        for doc in existing_emails:
+            email = doc.get("email")
+            if email in email_map:
+                email_map[email] = True
+        
+        logger.info(f"Batch email check: {sum(email_map.values())}/{len(emails)} emails exist in database")
+        return email_map
+        
+    except asyncio.TimeoutError:
+        logger.debug(f"MongoDB query timeout checking batch of {len(emails)} emails")
+        return {email.lower(): False for email in emails}
+    except Exception as e:
+        logger.debug(f"Error checking batch emails: {e}")
+        return {email.lower(): False for email in emails}
 

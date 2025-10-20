@@ -37,7 +37,7 @@ except Exception:
         return time.strftime("run_%Y%m%d_%H%M%S")
 
 try:
-    from core.mongodb import get_emails_for_domain, store_emails_for_domain, is_domain_cached
+    from core.mongodb import get_emails_for_domain, store_emails_for_domain, is_domain_cached, check_emails_exist_batch
     MONGODB_AVAILABLE = True
 except Exception:
     MONGODB_AVAILABLE = False
@@ -633,7 +633,7 @@ async def scrape_site(start_url: str,
                 if u not in visited and u not in queue:
                     queue.append(u)
     
-    # Final de-duplication (case-insensitive) to ensure unique emails
+    # First: de-duplication (case-insensitive) to ensure unique emails
     uniq_seen: Set[str] = set()
     uniq_out: List[Dict[str, str]] = []
     for item in out:
@@ -641,6 +641,28 @@ async def scrape_site(start_url: str,
         if em and em not in uniq_seen:
             uniq_seen.add(em)
             uniq_out.append(item)
+    
+    # Second: check unique emails against MongoDB database (batch operation)
+    if MONGODB_AVAILABLE and uniq_out:
+        try:
+            info(f"checking {len(uniq_out)} unique emails against database...")
+            emails_to_check = [item.get("email", "") for item in uniq_out if item.get("email")]
+            existing_emails = await check_emails_exist_batch(emails_to_check)
+            existing_count = sum(existing_emails.values())
+            
+            if existing_count > 0:
+                info(f"found {existing_count} emails already in database, filtering them out...")
+                # Filter out emails that exist in database
+                filtered_out: List[Dict[str, str]] = []
+                for item in uniq_out:
+                    em = (item.get("email") or "").lower()
+                    if not existing_emails.get(em, False):
+                        filtered_out.append(item)
+                uniq_out = filtered_out
+                info(f"after filtering: {len(uniq_out)} new emails remaining")
+        except Exception as e:
+            warn(f"MongoDB email check failed: {e}, continuing without check...")
+            # Continue with all unique emails if check fails
 
     web_count = max(0, len(uniq_out) - hunter_count)
     info(f"combined results: {hunter_count} from Hunter + {web_count} from web scraping = {len(uniq_out)} unique emails")
