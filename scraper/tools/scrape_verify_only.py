@@ -806,13 +806,11 @@ def _append_jsonl(path: str, obj: dict) -> None:
 
 def _emails_jsonl_to_csv(jsonl_path: str, csv_path: str) -> None:
     """
-    Flatten verifier results rows into a CSV:
-      name, website, email1, email2, email3, ... (each email in separate column)
+    Flatten verifier results rows into a CSV where each email gets its own row:
+      name, website, verified_emails (each email in separate row)
     """
     rows = []
-    max_emails = 0
     
-    # First pass: collect all data and find max number of emails
     with open(jsonl_path, "r", encoding="utf-8") as f:
         for line in f:
             with contextlib.suppress(Exception):
@@ -822,17 +820,27 @@ def _emails_jsonl_to_csv(jsonl_path: str, csv_path: str) -> None:
                 # Extract base URL (protocol + domain) from full URL
                 normalized_website = extract_base_url(website) if website else ""
                 verified = obj.get("verified_emails") or []
-                
-                row_data = {"name": name, "website": normalized_website}
-                for i, email in enumerate(verified):
-                    row_data[f"email_{i+1}"] = email
-                
-                rows.append(row_data)
-                max_emails = max(max_emails, len(verified))
-    
-    # Create fieldnames: name, website, email_1, email_2, ...
-    fieldnames = ["name", "website"] + [f"email_{i+1}" for i in range(max_emails)]
 
+                # Create a row for each email
+                for i, email in enumerate(verified):
+                    if i == 0:
+                        # First email gets name and website
+                        rows.append({
+                            "name": name,
+                            "website": normalized_website,
+                            "verified_emails": email
+                        })
+                    else:
+                        # Subsequent emails have empty name and website
+                        rows.append({
+                            "name": "",
+                            "website": "",
+                            "verified_emails": email
+                        })
+    
+    # Create fieldnames: name, website, verified_emails
+    fieldnames = ["name", "website", "verified_emails"]
+    
     _ensure_dir(os.path.dirname(csv_path))
     with open(csv_path, "w", newline="", encoding="utf-8") as out:
         w = csv.DictWriter(out, fieldnames=fieldnames)
