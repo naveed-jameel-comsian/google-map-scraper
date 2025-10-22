@@ -519,7 +519,7 @@ async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[
                 if not value:
                     continue
                 k = value.lower()
-                if k in seen or _is_placeholder(value):
+                if k in seen or _is_placeholder(value) or k.endswith('.gov'):
                     continue
                 srcs = item.get("sources") or []
                 where = None
@@ -597,7 +597,7 @@ async def scrape_site(start_url: str,
         for item in hunter_emails:
             email = item["email"]
             k = email.lower()
-            if k not in seen_emails and not _is_placeholder(email):
+            if k not in seen_emails and not _is_placeholder(email) and not k.endswith('.gov'):
                 seen_emails.add(k)
                 out.append(item)
 
@@ -622,7 +622,7 @@ async def scrape_site(start_url: str,
                 is_public_domain = domain in PUBLIC_EMAIL_DOMAINS
                 if is_same_domain or is_public_domain:
                     k = e.lower()
-                    if k not in seen_emails and not _is_placeholder(e):
+                    if k not in seen_emails and not _is_placeholder(e) and not k.endswith('.gov'):
                         seen_emails.add(k)
                         out.append({"email": e, "found_on": where})
 
@@ -639,6 +639,9 @@ async def scrape_site(start_url: str,
     for item in out:
         em = (item.get("email") or "").lower()
         if em and em not in uniq_seen:
+            # Exclude .gov emails
+            if em.endswith('.gov'):
+                continue
             uniq_seen.add(em)
             uniq_out.append(item)
     
@@ -864,7 +867,7 @@ def _export_unique_emails_csv(run_emails_jsonl: str, unique_csv_path: str) -> in
                 name = (obj.get("name") or "").strip()
                 for e in (obj.get("verified_emails") or []):
                     k = e.lower()
-                    if k and k not in uniq:
+                    if k and k not in uniq and not k.endswith('.gov'):
                         uniq[k] = (site, name)
 
     _ensure_dir(os.path.dirname(unique_csv_path))
