@@ -177,7 +177,11 @@ async def get_emails_for_domain(domain: str) -> Optional[List[Dict[str, Any]]]:
         return None
 
 
-async def store_emails_for_domain(domain: str, emails: List[Dict[str, Any]], source: str = "scraper") -> bool:
+async def store_emails_for_domain(name: str, domain: str, emails: List[Dict[str, Any]], 
+                                 search_term: str, search_location: str, source: str = "scraper",
+                                 rating: float = None, reviews_count: int = None, address: str = None, 
+                                 phone: str = None, latitude: float = None, longitude: float = None, 
+                                 listing_url: str = None) -> bool:
     """
     Store emails for a domain in MongoDB.
     
@@ -185,6 +189,13 @@ async def store_emails_for_domain(domain: str, emails: List[Dict[str, Any]], sou
         domain: The domain name
         emails: List of email documents with 'email' and 'found_on' fields
         source: Source of the emails (e.g., 'scraper', 'hunter')
+        rating: Business rating (e.g., 4.9)
+        reviews_count: Number of reviews (e.g., 3204)
+        address: Business address
+        phone: Phone number
+        latitude: GPS latitude
+        longitude: GPS longitude
+        listing_url: Google Maps listing URL
         
     Returns:
         True if stored successfully, False otherwise
@@ -200,18 +211,28 @@ async def store_emails_for_domain(domain: str, emails: List[Dict[str, Any]], sou
             email_doc = {
                 "email": email_data.get("email", "").lower(),
                 "found_on": email_data.get("found_on", ""),
-                "source": source,
-                "cached_at": datetime.now(timezone.utc).isoformat()
             }
             email_docs.append(email_doc)
         
         # Prepare document to store
         doc = {
+            "name": name,
             "domain": domain.lower(),
             "emails": email_docs,
             "email_count": len(email_docs),
+            # Additional fields at domain level
+            "rating": rating,
+            "reviews_count": reviews_count,
+            "address": address,
+            "phone": phone,
+            "latitude": latitude,
+            "longitude": longitude,
+            "listing_url": listing_url,
+            "search_term": search_term,
+            "search_location": search_location,
             "last_updated": datetime.now(timezone.utc).isoformat(),
-            "source": source
+            "source": source,
+
         }
         
         # Upsert (insert or update) with timeout
@@ -357,8 +378,9 @@ async def save_query_record(
     search_location: str,
     started_at: str,
     finished_at: str,
-    emails: List[Dict[str, Any]],
-    email_counters: Dict[str, Any]
+    sites: List[Dict[str, Any]],
+    email_count: str,
+    user_id: str = None
 ) -> bool:
     """
     Save a query record with email data to MongoDB.
@@ -370,15 +392,15 @@ async def save_query_record(
         started_at: ISO timestamp when query started
         finished_at: ISO timestamp when query finished
         emails: List of email documents in format:
-                [{"name": "Business Name", "website": "url", "emails": ["email1", "email2"], "email_count": 2}, ...]
+                [{"name": "Business Name", "website": "url", "emails": ["email1", "email2"], "email_count": 2, "rating": 4.5, "reviews_count": 100, "address": "123 Main St", "phone": "555-1234", "latitude": 32.7767, "longitude": -96.7970, "listing_url": "https://..."}, ...]
         email_counters: Counters for email statistics (sites_processed, emails_verified)
         
     Returns:
         True if stored successfully, False otherwise
     """
     try:
-        print(f"[MongoDB] save_query_record called: run_id={run_id}, businesses={len(emails)}")
-        logger.info(f"save_query_record called: run_id={run_id}, businesses={len(emails)}")
+        print(f"[MongoDB] save_query_record called: run_id={run_id}, businesses={len(sites)}")
+        logger.info(f"save_query_record called: run_id={run_id}, businesses={len(sites)}")
         
         collection = await get_mongodb_records_collection()
         if collection is None:
@@ -396,13 +418,13 @@ async def save_query_record(
             "started_at": started_at,
             "finished_at": finished_at,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "emails": emails,
-            "email_count": len(emails),
-            "email_counters": email_counters
+            "sites": sites,
+            "email_count": email_count,
+            "user_id": user_id
         }
         
         print(f"[MongoDB] Document prepared, saving to MongoDB...")
-        logger.info(f"Saving record to MongoDB: run_id={run_id}, businesses={len(emails)}, counters={email_counters}")
+        logger.info(f"Saving record to MongoDB: run_id={run_id}, businesses={len(sites)}, counters={email_count}")
         
         # Upsert (insert or update) with timeout
         print(f"[MongoDB] Calling collection.replace_one...")
@@ -418,7 +440,7 @@ async def save_query_record(
         print(f"[MongoDB] replace_one completed: upserted_id={result.upserted_id}, modified={result.modified_count}")
         
         if result.upserted_id or result.modified_count:
-            msg = f"[SUCCESS] Successfully saved query record: run_id={run_id}, businesses={len(emails)}, upserted={bool(result.upserted_id)}, modified={result.modified_count}"
+            msg = f"[SUCCESS] Successfully saved query record: run_id={run_id}, businesses={len(sites)}, upserted={bool(result.upserted_id)}, modified={result.modified_count}"
             print(f"[MongoDB] {msg}")
             logger.info(msg)
             return True

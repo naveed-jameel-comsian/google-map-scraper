@@ -708,18 +708,18 @@ async def scrape_site(start_url: str,
     web_count = max(0, len(uniq_out) - hunter_count)
     info(f"combined results: {hunter_count} from Hunter + {web_count} from web scraping = {len(uniq_out)} unique emails")
     
-    # Store results in MongoDB cache if available
-    if MONGODB_AVAILABLE and uniq_out:
-        try:
-            info(f"storing {len(uniq_out)} emails in MongoDB cache for {root_domain}...")
-            success = await store_emails_for_domain(root_domain, uniq_out, source="scraper")
-            if success:
-                info(f"successfully cached emails for {root_domain} in MongoDB")
-            else:
-                warn(f"failed to cache emails for {root_domain} in MongoDB")
-        except Exception as e:
-            warn(f"MongoDB cache store failed for {root_domain}: {e}")
-            info(f"Continuing without caching...")
+    # # Store results in MongoDB cache if available
+    # if MONGODB_AVAILABLE and uniq_out:
+    #     try:
+    #         info(f"storing {len(uniq_out)} emails in MongoDB cache for {root_domain}...")
+    #         success = await store_emails_for_domain(root_domain, uniq_out, source="scraper")
+    #         if success:
+    #             info(f"successfully cached emails for {root_domain} in MongoDB")
+    #         else:
+    #             warn(f"failed to cache emails for {root_domain} in MongoDB")
+    #     except Exception as e:
+    #         warn(f"MongoDB cache store failed for {root_domain}: {e}")
+    #         info(f"Continuing without caching...")
     
     return uniq_out
 
@@ -1018,10 +1018,25 @@ async def run_file(infile: str, args, logger, run_emails_path: str, meta_path: s
     verified_total = 0
     processed = 0
 
-    async def process_one(i: int, obj: dict):
+    meta = _safe_load_json(meta_path)
+    search_term = meta.get("search_term", "")
+    search_location = meta.get("search_location", "")
+
+    async def process_one(i: int, obj: dict): # gmap.jsonl > emails.jsonl
         nonlocal verified_total, processed
         name = (obj.get("name") or "(unknown)") if isinstance(obj, dict) else "(unknown)"
         site = (obj.get("website") or "").strip() if isinstance(obj, dict) else ""
+
+        # Extract additional fields from gmaps data
+        rating = obj.get("rating") if isinstance(obj, dict) else None
+        reviews_count = obj.get("reviews_count") if isinstance(obj, dict) else None
+        address = obj.get("address") if isinstance(obj, dict) else None
+        phone = obj.get("phone") if isinstance(obj, dict) else None
+        latitude = obj.get("latitude") if isinstance(obj, dict) else None
+        longitude = obj.get("longitude") if isinstance(obj, dict) else None
+        listing_url = obj.get("listing_url") if isinstance(obj, dict) else None
+
+
         if not site:
             info(f"[{i}/{total}] {name} | (no site)")
             return
@@ -1061,6 +1076,27 @@ async def run_file(infile: str, args, logger, run_emails_path: str, meta_path: s
                 "scraped_emails": scraped,
                 "verified_emails": verified
             }
+
+            # Store enhanced scraped emails in MongoDB if available
+            if MONGODB_AVAILABLE:
+                try:
+                    root_domain = normalize_domain(site)
+                    if root_domain:
+                        info(f"storing {len(scraped)} emails in MongoDB cache for {root_domain}...")
+                        success = await store_emails_for_domain(name, root_domain, scraped, 
+                                                              search_term, search_location,source="gmaps", 
+                                                              rating=rating, reviews_count=reviews_count, 
+                                                              address=address, phone=phone, 
+                                                              latitude=latitude, longitude=longitude, 
+                                                              listing_url=listing_url)
+                        if success:
+                            info(f"successfully cached emails for {root_domain} in MongoDB")
+                        else:
+                            warn(f"failed to cache emails for {root_domain} in MongoDB")
+                except Exception as e:
+                    warn(f"MongoDB cache store failed for {root_domain}: {e}")
+
+
             async with RESULTS_FILE_LOCK:
                 _append_jsonl(args.out, result_row)
                 _append_jsonl(run_emails_path, result_row)
@@ -1195,7 +1231,7 @@ def main():
                 started_at = meta.get("started_at", "")
                 
                 # Read emails directly from JSONL file (not dependent on CSV export)
-                emails_data = []
+                sites_data = []
                 if run_emails_path and os.path.exists(run_emails_path):
                     try:
                         with open(run_emails_path, "r", encoding="utf-8") as f:
@@ -1207,23 +1243,39 @@ def main():
                                     # Extract base URL (protocol + domain) from full URL
                                     normalized_website = extract_base_url(website) if website else ""
                                     verified_emails = obj.get("verified_emails", [])
+
+                                    # Extract additional fields from gmaps data
+                                    rating = obj.get("rating")
+                                    reviews_count = obj.get("reviews_count")
+                                    address = obj.get("address")
+                                    phone = obj.get("phone")
+                                    latitude = obj.get("latitude")
+                                    longitude = obj.get("longitude")
+                                    listing_url = obj.get("listing_url")
                                     
                                     # Only save records that have at least one email
                                     if verified_emails:
-                                        emails_data.append({
+                                        sites_data.append({
                                             "name": name,
                                             "website": normalized_website,
                                             "emails": verified_emails,
-                                            "email_count": len(verified_emails)
+                                            "email_count": len(verified_emails),
+                                            "rating": rating,
+                                            "reviews_count": reviews_count,
+                                            "address": address,
+                                            "phone": phone,
+                                            "latitude": latitude,
+                                            "longitude": longitude,
+                                            "listing_url": listing_url
                                         })
-                        info(f"Read {len(emails_data)} records from emails JSONL for database storage")
+                        info(f"Read {len(sites_data)} records from emails JSONL for database storage")
                     except Exception as e:
                         warn(f"Failed to read emails JSONL for database storage: {e}")
                 
                 # Save to database using a fresh event loop
-                if emails_data:
+                if sites_data:
                     try:
-                        info(f"Attempting to save {len(emails_data)} business records to MongoDB...")
+                        info(f"Attempting to save {len(sites_data)} business records to MongoDB...")
                         info(f"MongoDB config: uri={os.getenv('MONGODB_URI', 'mongodb://localhost:27017')}, db={os.getenv('MONGODB_DATABASE', 'email_scraper')}")
                         
                         # Create a new event loop for this operation
@@ -1240,20 +1292,20 @@ def main():
                             mongodb_logger.addHandler(handler)
                         
                         try:
-                            info(f"Calling save_query_record with run_id={run_id}, businesses={len(emails_data)}")
+                            info(f"Calling save_query_record with run_id={run_id}, businesses={len(sites_data)}")
                             success = loop.run_until_complete(save_query_record(
                                 run_id=run_id,
                                 search_term=search_term,
                                 search_location=search_location,
                                 started_at=started_at,
                                 finished_at=finished_ts,
-                                emails=emails_data,
-                                email_counters={"sites_processed": processed, "emails_verified": verified_total}
+                                sites=sites_data,
+                                email_count = verified_total
                             ))
                             info(f"save_query_record returned: {success}")
                             
                             if success:
-                                info(f"[SUCCESS] Query record saved to database: {run_id} ({len(emails_data)} businesses)")
+                                info(f"[SUCCESS] Query record saved to database: {run_id} ({len(sites_data)} businesses)")
                             else:
                                 warn(f"[FAILED] Failed to save query record to database: {run_id} (save returned False)")
                                 warn(f"   This usually means MongoDB connection failed. Check logs above for connection errors.")

@@ -160,7 +160,7 @@ class QueryRecord(BaseModel):
     finished_at: str
     created_at: str
     email_count: int
-    email_counters: Dict[str, Any] = {}
+    sites_processed: int
 
 
 @router.get("/records", response_model=List[QueryRecord])
@@ -190,7 +190,7 @@ async def list_records():
                     finished_at=record.get("finished_at", ""),
                     created_at=record.get("created_at", ""),
                     email_count=record.get("email_count", 0),
-                    email_counters=record.get("email_counters", {})
+                    sites_processed=len(record.get("sites", []))
                 ))
             except Exception as e:
                 print(f"Error converting record: {e}")
@@ -217,10 +217,10 @@ async def download_record_csv(run_id: str):
         
         record = await get_query_record_by_run_id(run_id)
         
-        if not record or not record.get("emails"):
+        if not record or not record.get("sites"):
             return {"error": "Record not found or no emails available"}
         
-        emails_data = record.get("emails", [])
+        emails_data = record.get("sites", [])
         
         # Convert from MongoDB format to CSV format
         # MongoDB format: [{name, website, emails: [email1, email2, ...]}, ...]
