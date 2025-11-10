@@ -11,16 +11,19 @@ import logging
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
     from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+    from pymongo.operations import UpdateOne
 else:
     try:
         from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
         from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+        from pymongo.operations import UpdateOne
     except ImportError:
         AsyncIOMotorClient = None
         AsyncIOMotorDatabase = None
         AsyncIOMotorCollection = None
         ConnectionFailure = Exception
         ServerSelectionTimeoutError = Exception
+        UpdateOne = None
 
 # MongoDB configuration
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
@@ -668,4 +671,111 @@ async def check_emails_exist_batch(emails: List[str]) -> Dict[str, bool]:
     except Exception as e:
         logger.debug(f"Error checking batch emails: {e}")
         return {email.lower(): False for email in emails}
+
+
+async def store_emails(emails: List[Dict[str, Any]], source: str = "scraper") -> int:
+    """
+    Store individual emails to the emails collection.
+    
+    Args:
+        emails: List of email documents with 'email' field (and optionally 'found_on', 'domain', etc.)
+        domain: Optional domain associated with the emails
+        source: Source of the emails (e.g., 'scraper', 'hunter')
+        
+    Returns:
+        Number of emails successfully stored
+    """
+    try:
+        collection = await get_mongodb_emails_collection()
+        if collection is None:
+            return 0
+        
+        stored_count = 0
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Prepare email documents for insertion
+        email_docs = []
+        for email_data in emails:
+            email = (email_data.get("email") or "").strip().lower()
+            if not email:
+                continue
+            
+            email_doc = {
+                "email": email,
+                "created_at": now,
+                "original_email": email_data.get("email"),
+                "source": source,
+            }
+            email_docs.append(email_doc)
+        
+        if not email_docs:
+            return 0
+        
+        # Use bulk operations for better performance
+        if UpdateOne is not None:
+            try:
+                operations = []
+                for email_doc in email_docs:
+                    operations.append(
+                        UpdateOne(
+                            {"email": email_doc["email"]},
+                            {
+                                "$set": email_doc,
+                                "$setOnInsert": {"created_at": email_doc["created_at"]}
+                            },
+                            upsert=True
+                        )
+                    )
+                
+                if operations:
+                    result = await asyncio.wait_for(
+                        collection.bulk_write(operations, ordered=False),
+                        timeout=10.0
+                    )
+                    stored_count = result.upserted_count + result.modified_count
+            except Exception as e:
+                logger.debug(f"Error in bulk write for emails: {e}, falling back to individual updates")
+                # Fallback to individual inserts
+                stored_count = 0
+                for email_doc in email_docs:
+                    try:
+                        result = await asyncio.wait_for(
+                            collection.update_one(
+                                {"email": email_doc["email"]},
+                                {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
+                                upsert=True
+                            ),
+                            timeout=2.0
+                        )
+                        if result.upserted_id or result.modified_count:
+                            stored_count += 1
+                    except Exception:
+                        pass
+        else:
+            # Fallback to individual updates if UpdateOne is not available
+            for email_doc in email_docs:
+                try:
+                    result = await asyncio.wait_for(
+                        collection.update_one(
+                            {"email": email_doc["email"]},
+                            {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
+                            upsert=True
+                        ),
+                        timeout=2.0
+                    )
+                    if result.upserted_id or result.modified_count:
+                        stored_count += 1
+                except Exception:
+                    pass
+        
+        if stored_count > 0:
+            logger.info(f"Stored {stored_count}/{len(email_docs)} emails to emails collection")
+        return stored_count
+        
+    except asyncio.TimeoutError:
+        logger.debug(f"MongoDB store timeout for {len(emails)} emails")
+        return 0
+    except Exception as e:
+        logger.debug(f"Error storing emails: {e}")
+        return 0
 

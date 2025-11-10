@@ -23,7 +23,7 @@ import os
 import re
 import time
 from typing import List, Dict, Tuple, Set, Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, unquote
 
 import httpx
 
@@ -37,10 +37,11 @@ except Exception:
         return time.strftime("run_%Y%m%d_%H%M%S")
 
 try:
-    from core.mongodb import get_emails_for_domain, store_emails_for_domain, is_domain_cached, check_emails_exist_batch
+    from core.mongodb import get_emails_for_domain, store_emails_for_domain, is_domain_cached, check_emails_exist_batch, store_emails
     MONGODB_AVAILABLE = True
 except Exception:
     MONGODB_AVAILABLE = False
+    store_emails = None
 OUT_ROOT = os.getenv("OUT_ROOT") or os.path.abspath("out")
 MAX_PAGES = 20
 TIMEOUT = 15.0
@@ -525,7 +526,10 @@ async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[
                     'reviews@', 'resources@', 'opt-out@', 'medicalrecords@', 'publicaffairs@',
                     'referrals@', 'wordpress@', 'complaint@', 'support@', 'comments@',
                     'patientexperience@', 'compliance@', 'complianceofficer@', 'authorization@',
-                    'privacy@', 'volunteers@', 'volunteer@', 'admissions@'
+                    'privacy@', 'volunteers@', 'volunteer@', 'admissions@',
+                    'webmaster@','hipaa.security@','patientaccounts@','workcomp@','seminairs@','humanresources@',
+                    'records@','email@','covid@','MyChartSupport@','feedback@','healthinsurancehelp@','registration@',
+                    'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                 ]
                 if (k in seen or _is_placeholder(value) or k.endswith('.gov') or 
                     k.endswith('@squarespace.com') or 
@@ -613,7 +617,10 @@ async def scrape_site(start_url: str,
                 'reviews@', 'resources@', 'opt-out@', 'medicalrecords@', 'publicaffairs@',
                 'referrals@', 'wordpress@', 'complaint@', 'support@', 'comments@',
                 'patientexperience@', 'compliance@', 'complianceofficer@', 'authorization@',
-                'privacy@', 'volunteers@', 'volunteer@', 'admissions@'
+                'privacy@', 'volunteers@', 'volunteer@', 'admissions@',
+                'webmaster@','hipaa.security@','patientaccounts@','workcomp@','seminairs@','humanresources@',
+                'records@','email@','covid@','MyChartSupport@','feedback@','healthinsurancehelp@','registration@',
+                'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
             ]
             if (k not in seen_emails and not _is_placeholder(email) and not k.endswith('.gov') and 
                 not k.endswith('@squarespace.com') and 
@@ -648,7 +655,10 @@ async def scrape_site(start_url: str,
                         'reviews@', 'resources@', 'opt-out@', 'medicalrecords@', 'publicaffairs@',
                         'referrals@', 'wordpress@', 'complaint@', 'support@', 'comments@',
                         'patientexperience@', 'compliance@', 'complianceofficer@', 'authorization@',
-                        'privacy@', 'volunteers@', 'volunteer@', 'admissions@'
+                        'privacy@', 'volunteers@', 'volunteer@', 'admissions@',
+                        'webmaster@','hipaa.security@','patientaccounts@','workcomp@','seminairs@','humanresources@',
+                        'records@','email@','covid@','MyChartSupport@','feedback@','healthinsurancehelp@','registration@',
+                        'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                     ]
                     if (k not in seen_emails and not _is_placeholder(e) and not k.endswith('.gov') and 
                         not k.endswith('@squarespace.com') and 
@@ -667,20 +677,31 @@ async def scrape_site(start_url: str,
     uniq_seen: Set[str] = set()
     uniq_out: List[Dict[str, str]] = []
     for item in out:
-        em = (item.get("email") or "").lower()
-        if em and em not in uniq_seen:
+        em = (item.get("email") or "").strip()
+        # URL-decode to handle %-encoded characters (e.g., %20 for space, %40 for @)
+        em = unquote(em)
+        # Remove any % characters that might remain after decoding
+        em = em.replace('%', '')
+        em = em.strip()
+        # Store cleaned email in item
+        item["email"] = em
+        em_lower = em.lower()
+        if em_lower and em_lower not in uniq_seen:
             # Exclude emails with unwanted prefixes and domains
             excluded_prefixes = [
                 'release@', 'recruitment@', 'newsletter@', 'foundation@', 'publicrelations@',
                 'reviews@', 'resources@', 'opt-out@', 'medicalrecords@', 'publicaffairs@',
                 'referrals@', 'wordpress@', 'complaint@', 'support@', 'comments@',
                 'patientexperience@', 'compliance@', 'complianceofficer@', 'authorization@',
-                'privacy@', 'volunteers@', 'volunteer@', 'admissions@'
+                'privacy@', 'volunteers@', 'volunteer@', 'admissions@',
+                'webmaster@','hipaa.security@','patientaccounts@','workcomp@','seminairs@','humanresources@',
+                'records@','email@','covid@','MyChartSupport@','feedback@','healthinsurancehelp@','registration@',
+                'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
             ]
-            if (em.endswith('.gov') or em.endswith('@squarespace.com') or 
-                any(em.startswith(prefix) for prefix in excluded_prefixes)):
+            if (em_lower.endswith('.gov') or em_lower.endswith('@squarespace.com') or 
+                any(em_lower.startswith(prefix) for prefix in excluded_prefixes)):
                 continue
-            uniq_seen.add(em)
+            uniq_seen.add(em_lower)
             uniq_out.append(item)
     
     # Second: check unique emails against MongoDB database (batch operation)
@@ -701,6 +722,20 @@ async def scrape_site(start_url: str,
                         filtered_out.append(item)
                 uniq_out = filtered_out
                 info(f"after filtering: {len(uniq_out)} new emails remaining")
+            else:
+                info(f"no existing emails found in database, all {len(uniq_out)} emails are new")
+            
+            # Store new emails to emails collection for future checks
+            if uniq_out and store_emails:
+                try:
+                    info(f"storing {len(uniq_out)} new emails to emails collection...")
+                    stored_count = await store_emails(uniq_out, source="scraper")
+                    if stored_count > 0:
+                        info(f"successfully stored {stored_count} new emails to emails collection")
+                    else:
+                        warn(f"failed to store new emails to emails collection")
+                except Exception as e:
+                    warn(f"MongoDB email store failed: {e}, continuing without storing...")
         except Exception as e:
             warn(f"MongoDB email check failed: {e}, continuing without check...")
             # Continue with all unique emails if check fails
@@ -911,7 +946,10 @@ def _export_unique_emails_csv(run_emails_jsonl: str, unique_csv_path: str) -> in
                         'reviews@', 'resources@', 'opt-out@', 'medicalrecords@', 'publicaffairs@',
                         'referrals@', 'wordpress@', 'complaint@', 'support@', 'comments@',
                         'patientexperience@', 'compliance@', 'complianceofficer@', 'authorization@',
-                        'privacy@', 'volunteers@', 'volunteer@', 'admissions@'
+                        'privacy@', 'volunteers@', 'volunteer@', 'admissions@',
+                        'webmaster@','hipaa.security@','patientaccounts@','workcomp@','seminairs@','humanresources@',
+                        'records@','email@','covid@','MyChartSupport@','feedback@','healthinsurancehelp@','registration@',
+                        'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                     ]
                     if (k and k not in uniq and not k.endswith('.gov') and 
                         not k.endswith('@squarespace.com') and 
