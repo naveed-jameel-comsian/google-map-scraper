@@ -21,11 +21,18 @@ import html
 import json
 import os
 import re
+import sys
 import time
 from typing import List, Dict, Tuple, Set, Optional
 from urllib.parse import urlparse, urljoin, unquote
 
 import httpx
+
+# Ensure the parent `scraper` directory is on the path so `core.*` imports work
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_SCRAPER_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, ".."))
+if _SCRAPER_ROOT not in sys.path:
+    sys.path.insert(0, _SCRAPER_ROOT)
 
 try:
     from core.telemetry import JsonLogger, new_run_id
@@ -742,19 +749,6 @@ async def scrape_site(start_url: str,
 
     web_count = max(0, len(uniq_out) - hunter_count)
     info(f"combined results: {hunter_count} from Hunter + {web_count} from web scraping = {len(uniq_out)} unique emails")
-    
-    # # Store results in MongoDB cache if available
-    # if MONGODB_AVAILABLE and uniq_out:
-    #     try:
-    #         info(f"storing {len(uniq_out)} emails in MongoDB cache for {root_domain}...")
-    #         success = await store_emails_for_domain(root_domain, uniq_out, source="scraper")
-    #         if success:
-    #             info(f"successfully cached emails for {root_domain} in MongoDB")
-    #         else:
-    #             warn(f"failed to cache emails for {root_domain} in MongoDB")
-    #     except Exception as e:
-    #         warn(f"MongoDB cache store failed for {root_domain}: {e}")
-    #         info(f"Continuing without caching...")
     
     return uniq_out
 

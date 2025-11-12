@@ -706,67 +706,69 @@ async def store_emails(emails: List[Dict[str, Any]], source: str = "scraper") ->
                 "original_email": email_data.get("email"),
                 "source": source,
             }
+            await collection.insert_one(email_doc)
+            stored_count += 1
             email_docs.append(email_doc)
         
         if not email_docs:
             return 0
         
         # Use bulk operations for better performance
-        if UpdateOne is not None:
-            try:
-                operations = []
-                for email_doc in email_docs:
-                    operations.append(
-                        UpdateOne(
-                            {"email": email_doc["email"]},
-                            {
-                                "$set": email_doc,
-                                "$setOnInsert": {"created_at": email_doc["created_at"]}
-                            },
-                            upsert=True
-                        )
-                    )
+        # if UpdateOne is not None:
+        #     try:
+        #         operations = []
+        #         for email_doc in email_docs:
+        #             operations.append(
+        #                 UpdateOne(
+        #                     {"email": email_doc["email"]},
+        #                     {
+        #                         "$set": email_doc,
+        #                         "$setOnInsert": {"created_at": email_doc["created_at"]}
+        #                     },
+        #                     upsert=True
+        #                 )
+        #             )
                 
-                if operations:
-                    result = await asyncio.wait_for(
-                        collection.bulk_write(operations, ordered=False),
-                        timeout=10.0
-                    )
-                    stored_count = result.upserted_count + result.modified_count
-            except Exception as e:
-                logger.debug(f"Error in bulk write for emails: {e}, falling back to individual updates")
-                # Fallback to individual inserts
-                stored_count = 0
-                for email_doc in email_docs:
-                    try:
-                        result = await asyncio.wait_for(
-                            collection.update_one(
-                                {"email": email_doc["email"]},
-                                {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
-                                upsert=True
-                            ),
-                            timeout=2.0
-                        )
-                        if result.upserted_id or result.modified_count:
-                            stored_count += 1
-                    except Exception:
-                        pass
-        else:
-            # Fallback to individual updates if UpdateOne is not available
-            for email_doc in email_docs:
-                try:
-                    result = await asyncio.wait_for(
-                        collection.update_one(
-                            {"email": email_doc["email"]},
-                            {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
-                            upsert=True
-                        ),
-                        timeout=2.0
-                    )
-                    if result.upserted_id or result.modified_count:
-                        stored_count += 1
-                except Exception:
-                    pass
+        #         if operations:
+        #             result = await asyncio.wait_for(
+        #                 collection.bulk_write(operations, ordered=False),
+        #                 timeout=10.0
+        #             )
+        #             stored_count = result.upserted_count + result.modified_count
+        #     except Exception as e:
+        #         logger.debug(f"Error in bulk write for emails: {e}, falling back to individual updates")
+        #         # Fallback to individual inserts
+        #         stored_count = 0
+        #         for email_doc in email_docs:
+        #             try:
+        #                 result = await asyncio.wait_for(
+        #                     collection.update_one(
+        #                         {"email": email_doc["email"]},
+        #                         {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
+        #                         upsert=True
+        #                     ),
+        #                     timeout=2.0
+        #                 )
+        #                 if result.upserted_id or result.modified_count:
+        #                     stored_count += 1
+        #             except Exception:
+        #                 pass
+        # else:
+        #     # Fallback to individual updates if UpdateOne is not available
+        #     for email_doc in email_docs:
+        #         try:
+        #             result = await asyncio.wait_for(
+        #                 collection.update_one(
+        #                     {"email": email_doc["email"]},
+        #                     {"$set": email_doc, "$setOnInsert": {"created_at": email_doc["created_at"]}},
+        #                     upsert=True
+        #                 ),
+        #                 timeout=2.0
+        #             )
+        #             if result.upserted_id or result.modified_count:
+        #                 stored_count += 1
+        #         except Exception:
+        #             pass
         
         if stored_count > 0:
             logger.info(f"Stored {stored_count}/{len(email_docs)} emails to emails collection")
