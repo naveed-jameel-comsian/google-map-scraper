@@ -982,7 +982,7 @@ async def run_gmaps(args) -> None:
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
     ip_per_worker = 1 # int(getattr(args, "ip_per_worker", 1) or 1)
-    args.use_proxy = 1
+    args.use_proxy = 0
     # use_proxy = int(getattr(args, "use_proxy", 0) or 0)
 
     q_full = f"{q} {loc}".strip()

@@ -1223,23 +1223,7 @@ def main():
         _append_meta(
             meta_path,
             status="done",
-            phase="emails_scraped" if processed > 0 else "emails_scraping_failed",
-            finished_at_emails=finished_ts,
-            finished_at=finished_ts,
-            email_counters={"sites_processed": processed, "emails_verified": verified_total},
-            files=files
-        )
-        if logger:
-            logger.info("[emails] job.done", processed=processed, emails_verified=verified_total)
-
-
-
-        finished_ts = ts()
-
-        _append_meta(
-            meta_path,
-            status="done",
-            phase="emails_scraped" if processed > 0 else "emails_scraping_failed",
+            phase="emails_scraped" if processed > 0 else "Found no new email",
             finished_at_emails=finished_ts,
             finished_at=finished_ts,
             email_counters={"sites_processed": processed, "emails_verified": verified_total},
