@@ -973,17 +973,21 @@ async def run_gmaps(args) -> None:
     """
     Args expected (matching your CLI):
       args.q, args.location, args.limit, args.use_proxy, args.proxy_mode, args.concurrency, args.delay_min, args.delay_max
+      args.variants: Optional list of variant queries [{"q": "term", "location": "loc"}, ...]
     Output: out/gmaps_{q}_{location}.jsonl
     """
     q = (args.q or "").strip()
     loc = (args.location or "").strip()
     limit = int(getattr(args, "limit", 0) or 0)  # 0 = all // heree
-    concurrency = int(getattr(args, "concurrency", 5) or 5)
     dmin = float(getattr(args, "delay_min", 0.05) or 0.05)
     dmax = float(getattr(args, "delay_max", 0.15) or 0.15)
     ip_per_worker = 1 # int(getattr(args, "ip_per_worker", 1) or 1)
     args.use_proxy = 0
     # use_proxy = int(getattr(args, "use_proxy", 0) or 0)
+    
+    # Get variants from args if provided
+    provided_variants = getattr(args, "variants", None) or []
+    concurrency = len(provided_variants)
 
     q_full = f"{q} {loc}".strip()
     outfile = os.path.join(OUT_ROOT, f"gmaps_{q.replace(' ', '_')}_{_normloc_for_filename(loc)}.jsonl")
@@ -1107,23 +1111,21 @@ async def run_gmaps(args) -> None:
         async def _run_variants_parallel() -> List[str]:
             """Run all variants in parallel"""
             try:
-                # Generate all variants
-                q_variants = _query_variants(q)
-                loc_variants = _location_variants(loc) or [""]
-                
-                # Create all variant combinations (limited to concurrency-1 since main query counts as 1)
                 variant_queries = []
-                max_variants = max(0, concurrency - 1)  # Reserve 1 slot for main query
-                for qi, li in product(q_variants, loc_variants):
-                    qv = f"{qi} {li}".strip()
-                    if qv.lower() != q_full.lower():  # Skip the original query
-                        variant_queries.append(qv)
-                        if len(variant_queries) >= max_variants:  # Limit to concurrency-1 variants
-                            break
-                    if len(variant_queries) >= max_variants:  # Break outer loop too
-                        break
                 
-                print(f"{ts()} | INFO    | [gmaps] generated {len(variant_queries)} variant queries (max {max_variants}, total slots: {concurrency})")
+                # Use provided variants if available, otherwise generate them
+                if provided_variants:
+                    # Use variants provided from UI
+                    for variant in provided_variants:
+                        variant_q = variant.get("q", "").strip()
+                        variant_loc = variant.get("location", "").strip()
+                        if variant_q and variant_loc:
+                            variant_query = f"{variant_q} {variant_loc}".strip()
+                            # Skip if it matches the main query
+                            if variant_query.lower() != q_full.lower():
+                                variant_queries.append(variant_query)
+                    
+                    print(f"{ts()} | INFO    | [gmaps] using {len(variant_queries)} provided variant queries (total slots: {concurrency})")
                 
                 if not variant_queries:
                     return []

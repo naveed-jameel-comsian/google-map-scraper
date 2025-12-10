@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -39,7 +40,18 @@ def main():
     parser.add_argument("--run_registry_dir", type=str, default=None,
                         help="If set, overrides OUT_ROOT/runs for meta.json location")
 
+    parser.add_argument("--variants", type=str, default=None,
+                        help="JSON array of variant queries: [{\"q\": \"term\", \"location\": \"loc\"}, ...]")
+
     args = parser.parse_args()
+    
+    # Parse variants if provided
+    if args.variants:
+        try:
+            args.variants = json.loads(args.variants)
+        except json.JSONDecodeError:
+            print(f"[WARN] Failed to parse --variants, ignoring: {args.variants}", flush=True)
+            args.variants = None
 
     safe_q = args.q.replace(" ", "_")
     safe_loc_norm = args.location.replace(" ", "_").replace(",", "").lower()

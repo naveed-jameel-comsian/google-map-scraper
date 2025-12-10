@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, HTTPException, Form
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import json
 
 from .settings import RUNS_DIR, STATIC_DIR, TEMPLATES_DIR
 from .tasks import launch_scrape
@@ -98,6 +99,7 @@ def launch(
         source: str = Form(...),
         q: str = Form(...),
         location: str = Form(...),
+        queries: str = Form(""),
         use_proxy: int = Form(0),
         concurrency: int = Form(8),
         ip_per_worker: int = Form(0),
@@ -111,10 +113,22 @@ def launch(
         proxy_mode: str = Form("rotating"),
         run_id: str = Form(""),
 ):
+    # Parse queries if provided
+    variants = []
+    if queries:
+        try:
+            queries_list = json.loads(queries)
+            # First query is the main query, rest are variants
+            if len(queries_list) > 1:
+                variants = queries_list[1:]
+        except json.JSONDecodeError:
+            pass
+    
     launch_info = launch_scrape(
         source=source,
         q=q,
         location=location,
+        variants=variants,
         use_proxy=use_proxy,
         concurrency=concurrency,
         ip_per_worker=ip_per_worker,

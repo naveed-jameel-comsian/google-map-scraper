@@ -24,18 +24,29 @@
     <section class="card">
         <h2>Launch a new run</h2>
         <form id="launch-form" hx-post="/launch" hx-target="#toast-slot" hx-swap="outerHTML">
+            <input type="hidden" name="queries" id="queries-json" value=""/>
             <div class="grid">
                 <label>Source
                     <select name="source">
                         <option value="gmaps">gmaps</option>
                     </select>
                 </label>
-                <label>Search / Industry
-                    <input type="text" name="q" placeholder="e.g. digital marketing" required/>
-                </label>
-                <label>Location
-                    <input type="text" name="location" placeholder="e.g. New York, NY" required/>
-                </label>
+                <div id="queries-container" style="grid-column: 1 / -1;">
+                    <div id="query-items">
+                        <div class="query-item" data-index="0">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end;">
+                                <label>Search / Industry
+                                    <input type="text" class="query-input" name="q" placeholder="e.g. digital marketing" required/>
+                                </label>
+                                <label>Location
+                                    <input type="text" class="location-input" name="location" placeholder="e.g. New York, NY" required/>
+                                </label>
+                                <button type="button" class="remove-query-btn" style="display: none; padding: 8px 12px; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer; height: fit-content;">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" id="add-query-btn" style="margin-top: 10px; padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">+ Add </button>
+                </div>
                 <!-- <label>Use Proxy
                     <select name="use_proxy">
                         <option value="0">No</option>
@@ -48,9 +59,9 @@
                         <option value="sticky" selected>Sticky</option>
                     </select>
                 </label> -->
-                <label>Variants
+                <!-- <label>Variants
                     <input type="number" name="concurrency" value="2" min="1" max="64"/>
-                </label>
+                </label> -->
                 <!-- <label>IP per worker
                     <select name="ip_per_worker">
                         <option value="0" selected>No</option>
@@ -355,6 +366,107 @@ document.addEventListener("DOMContentLoaded", () => {
             toastSlot.innerHTML = '';
         }, 4000);
     }
+
+    // Dynamic query management
+    document.addEventListener('DOMContentLoaded', () => {
+        const queriesContainer = document.getElementById('queries-container');
+        const addBtn = document.getElementById('add-query-btn');
+        const queryItems = document.getElementById('query-items');
+        const maxQueries = 5;
+
+        function updateRemoveButtons() {
+            const items = queryItems.querySelectorAll('.query-item');
+            items.forEach((item, index) => {
+                const removeBtn = item.querySelector('.remove-query-btn');
+                if (items.length > 1) {
+                    removeBtn.style.display = 'block';
+                } else {
+                    removeBtn.style.display = 'none';
+                }
+            });
+            if (items.length >= maxQueries) {
+                addBtn.style.display = 'none';
+            } else {
+                addBtn.style.display = 'block';
+            }
+        }
+
+        function addQueryItem() {
+            if (queryItems.children.length >= maxQueries) return;
+            
+            const index = queryItems.children.length;
+            const newItem = document.createElement('div');
+            newItem.className = 'query-item';
+            newItem.setAttribute('data-index', index);
+            newItem.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-top: 10px;">
+                    <label>Search / Industry
+                        <input type="text" class="query-input" placeholder="e.g. digital marketing" required/>
+                    </label>
+                    <label>Location
+                        <input type="text" class="location-input" placeholder="e.g. New York, NY" required/>
+                    </label>
+                    <button type="button" class="remove-query-btn" style="padding: 8px 12px; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer; height: fit-content;">Remove</button>
+                </div>
+            `;
+            queryItems.appendChild(newItem);
+            updateRemoveButtons();
+            
+            // Attach remove handler
+            newItem.querySelector('.remove-query-btn').addEventListener('click', () => {
+                newItem.remove();
+                updateRemoveButtons();
+            });
+        }
+
+        function removeQueryItem(item) {
+            item.remove();
+            updateRemoveButtons();
+        }
+
+        // Add button handler
+        addBtn.addEventListener('click', addQueryItem);
+
+        // Remove button handlers (for existing items)
+        queryItems.addEventListener('click', (e) => {
+            if (e.target.classList.contains('remove-query-btn')) {
+                const item = e.target.closest('.query-item');
+                removeQueryItem(item);
+            }
+        });
+
+        updateRemoveButtons();
+
+        // Intercept form submission to update queries JSON
+        const form = document.getElementById('launch-form');
+        const queriesJsonInput = document.getElementById('queries-json');
+        
+        form.addEventListener('submit', (e) => {
+            // Collect all queries
+            const queries = [];
+            const items = queryItems.querySelectorAll('.query-item');
+            items.forEach((item) => {
+                const qInput = item.querySelector('.query-input');
+                const locInput = item.querySelector('.location-input');
+                const q = qInput.value.trim();
+                const loc = locInput.value.trim();
+                if (q && loc) {
+                    queries.push({ q, location: loc });
+                }
+            });
+
+            if (queries.length === 0) {
+                e.preventDefault();
+                showToast('error', 'Please add at least one query');
+                return;
+            }
+
+            // Update the hidden input with queries JSON
+            queriesJsonInput.value = JSON.stringify(queries);
+            
+            // Let HTMX handle the form submission normally
+        });
+    });
 </script>
 
 {% endblock %}

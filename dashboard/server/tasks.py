@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -16,6 +17,7 @@ def launch_scrape(
         source: str,
         q: str,
         location: str,
+        variants: Optional[List[Dict[str, str]]] = None,
         limit: int = 0,
         use_proxy: int = 0,
         concurrency: int = 8,
@@ -61,6 +63,10 @@ def launch_scrape(
         "--run_id", run_id,
         "--export_csv", "1",
     ]
+    
+    # Add variants if provided
+    if variants:
+        cmd.extend(["--variants", json.dumps(variants)])
 
     log_f = open(log_path, "a", encoding="utf-8")
     proc = subprocess.Popen(
