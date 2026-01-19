@@ -683,6 +683,7 @@ async def _extract_text(page: Page, selector: str, timeout_ms: int = 2000) -> Op
         if t:
             return t.strip()
     except Exception:
+        print(f"{ts()} | through this selector {selector} workers")
         return None
     return None
 def _normalize_domain(url: Optional[str]) -> Optional[str]:

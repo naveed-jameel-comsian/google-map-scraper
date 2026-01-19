@@ -539,7 +539,9 @@ async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[
                     'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                 ]
                 if (k in seen or _is_placeholder(value) or k.endswith('.gov') or 
-                    k.endswith('@squarespace.com') or 
+                    k.endswith('@squarespace.com') or
+                    k.endswith('@army.mil') or
+                    k.endswith('.mil') or 
                     any(k.startswith(prefix) for prefix in excluded_prefixes)):
                     continue
                 srcs = item.get("sources") or []
@@ -630,7 +632,9 @@ async def scrape_site(start_url: str,
                 'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
             ]
             if (k not in seen_emails and not _is_placeholder(email) and not k.endswith('.gov') and 
-                not k.endswith('@squarespace.com') and 
+                not k.endswith('@squarespace.com') and
+                not k.endswith('@army.mil') and
+                not k.endswith('.mil') and
                 not any(k.startswith(prefix) for prefix in excluded_prefixes)):
                 seen_emails.add(k)
                 out.append(item)
@@ -668,7 +672,9 @@ async def scrape_site(start_url: str,
                         'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                     ]
                     if (k not in seen_emails and not _is_placeholder(e) and not k.endswith('.gov') and 
-                        not k.endswith('@squarespace.com') and 
+                        not k.endswith('@squarespace.com') and
+                        not k.endswith('@army.mil') and
+                        not k.endswith('.mil') and 
                         not any(k.startswith(prefix) for prefix in excluded_prefixes)):
                         seen_emails.add(k)
                         out.append({"email": e, "found_on": where})
@@ -706,6 +712,7 @@ async def scrape_site(start_url: str,
                 'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
             ]
             if (em_lower.endswith('.gov') or em_lower.endswith('@squarespace.com') or 
+                em_lower.endswith('@army.mil') or em_lower.endswith('.mil') or
                 any(em_lower.startswith(prefix) for prefix in excluded_prefixes)):
                 continue
             uniq_seen.add(em_lower)
@@ -946,7 +953,9 @@ def _export_unique_emails_csv(run_emails_jsonl: str, unique_csv_path: str) -> in
                         'giving@','events@','knowyourstatus@','memberservices@','webmarketsonline@'
                     ]
                     if (k and k not in uniq and not k.endswith('.gov') and 
-                        not k.endswith('@squarespace.com') and 
+                        not k.endswith('@squarespace.com') and
+                        not k.endswith('@army.mil') and
+                        not k.endswith('.mil') and 
                         not any(k.startswith(prefix) for prefix in excluded_prefixes)):
                         uniq[k] = (site, name)
 
@@ -1219,7 +1228,7 @@ def main():
             warn(f"emails CSV export failed: {e}")
 
         finished_ts = ts()
-
+        info(f"emails_verified 1-> {verified_total}")
         _append_meta(
             meta_path,
             status="done",
@@ -1355,6 +1364,7 @@ def main():
         #             warn(f"failed to delete input JSONL {args.infile}: {e}")
                     
     except Exception as e:
+        info(f"emails_verified 2-> {verified_total}")
         if logger:
             logger.warn("[emails] job.error", error=str(e))
         finished_ts = ts()
