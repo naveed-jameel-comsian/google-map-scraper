@@ -574,7 +574,7 @@ async def scrape_site_with_hunter(start_url: str, limit: int = 50) -> List[Dict[
 
 async def scrape_site(start_url: str,
                       max_pages: int = MAX_PAGES,
-                      include_external: bool = INCLUDE_EXTERNAL) -> List[Dict[str, str]]:
+                      include_external: bool = INCLUDE_EXTERNAL, mongo_check: bool = True) -> List[Dict[str, str]]:
     root_domain = normalize_domain(start_url)
     if not root_domain:
         warn(f"cannot determine root domain for {start_url}")
@@ -719,7 +719,7 @@ async def scrape_site(start_url: str,
             uniq_out.append(item)
     
     # Second: check unique emails against MongoDB database (batch operation)
-    if MONGODB_AVAILABLE and uniq_out:
+    if MONGODB_AVAILABLE and uniq_out and mongo_check :
         try:
             info(f"checking {len(uniq_out)} unique emails against database...")
             emails_to_check = [item.get("email", "") for item in uniq_out if item.get("email")]
