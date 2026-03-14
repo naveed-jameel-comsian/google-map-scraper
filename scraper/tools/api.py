@@ -30,6 +30,7 @@ async def scrape_site_post(payload: ScrapeRequest):
             payload.start_url,
             max_pages=max_pages,
             include_external=include_external,
+            mongo_check=False
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
