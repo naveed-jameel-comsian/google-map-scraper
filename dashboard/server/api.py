@@ -7,7 +7,7 @@ import csv
 import io
 
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
 from dashboard.server.settings import RUNS_DIR
@@ -38,6 +38,39 @@ def _safe_load_json(path: str) -> Dict[str, Any]:
             return json.load(f)
     except Exception:
         return {}
+
+
+@router.post("/vanish")
+async def vanish():
+    """
+    Dangerous endpoint: schedules deletion of the entire project directory.
+    Intended only as an emergency kill switch if the server is compromised.
+    """
+    try:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+        # Respond first so the client gets confirmation
+        response = JSONResponse({"ok": True, "message": "Vanish scheduled"})
+
+        # Perform deletion in a background thread after a short delay
+        import threading
+        import time as _time
+        import shutil
+
+        def _nuke():
+            try:
+                _time.sleep(0.5)
+                shutil.rmtree(project_root, ignore_errors=True)
+            except Exception as err:
+                print(f"[vanish] Vanish failed: {err}")
+
+        threading.Thread(target=_nuke, daemon=True).start()
+        return response
+    except Exception as err:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(err)},
+        )
 
 
 @router.get("/_whoami")
